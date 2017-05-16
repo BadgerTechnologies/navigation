@@ -154,7 +154,7 @@ namespace move_base {
       /**
        * @brief  Reset the state of the move_base action and send a zero velocity command to the base
        */
-      void resetState();
+      void resetState(bool planner_mutex_locked = false);
 
       void goalCB(const geometry_msgs::PoseStamped::ConstPtr& goal);
 

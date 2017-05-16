@@ -229,7 +229,7 @@ namespace move_base {
         planner_plan_->clear();
         latest_plan_->clear();
         controller_plan_->clear();
-        resetState();
+        resetState(true);
         planner_->initialize(bgp_loader_.getName(config.base_global_planner), planner_costmap_ros_);
 
         lock.unlock();
@@ -1152,11 +1152,14 @@ namespace move_base {
     return;
   }
 
-  void MoveBase::resetState(){
+  void MoveBase::resetState(bool planner_mutex_locked){
     // Disable the planner thread
-    boost::unique_lock<boost::mutex> lock(planner_mutex_);
-    runPlanner_ = false;
-    lock.unlock();
+    if (planner_mutex_locked) {
+      runPlanner_ = false;
+    } else {
+      boost::unique_lock<boost::mutex> lock(planner_mutex_);
+      runPlanner_ = false;
+    }
 
     // Reset statemachine
     state_ = PLANNING;
