@@ -81,7 +81,7 @@ void StaticLayer::onInitialize()
   unknown_cost_value_ = temp_unknown_cost_value;
 
   // Only resubscribe if topic has changed
-  if (map_sub_.getTopic() != ros::names::resolve(map_topic))
+  if (!first_map_only_ || map_sub_.getTopic() != ros::names::resolve(map_topic))
   {
     // we'll subscribe to the latched topic that the map server uses
     ROS_INFO("Requesting the map...");
