@@ -265,6 +265,8 @@ class AmclNode
     int max_beams_, min_particles_, max_particles_;
     double alpha1_, alpha2_, alpha3_, alpha4_, alpha5_;
     double alpha_slow_, alpha_fast_;
+    double uniform_pose_starting_weight_threshold_;
+    double uniform_pose_deweight_multiplier_;
     double z_hit_, z_short_, z_max_, z_rand_, sigma_hit_, lambda_short_;
   //beam skip related params
     bool do_beamskip_;
@@ -288,6 +290,7 @@ class AmclNode
 
     void reconfigureCB(amcl::AMCLConfig &config, uint32_t level);
 
+    AMCLLaserData *last_laser_data_;
     ros::Time last_laser_received_ts_;
     ros::Duration laser_check_interval_;
     void checkLaserReceived(const ros::TimerEvent& event);
@@ -346,7 +349,8 @@ AmclNode::AmclNode() :
 	      private_nh_("~"),
         initial_pose_hyp_(NULL),
         first_map_received_(false),
-        first_reconfigure_call_(true)
+        first_reconfigure_call_(true),
+        last_laser_data_(NULL)
 {
   boost::recursive_mutex::scoped_lock l(configuration_mutex_);
 
@@ -459,6 +463,8 @@ AmclNode::AmclNode() :
   private_nh_.param("transform_tolerance", tmp_tol, 0.1);
   private_nh_.param("recovery_alpha_slow", alpha_slow_, 0.001);
   private_nh_.param("recovery_alpha_fast", alpha_fast_, 0.1);
+  private_nh_.param("uniform_pose_starting_weight_threshold", uniform_pose_starting_weight_threshold_, 0.0);
+  private_nh_.param("uniform_pose_deweight_multiplier", uniform_pose_deweight_multiplier_, 0.0);
   private_nh_.param("tf_broadcast", tf_broadcast_, true);
   private_nh_.param("tf_reverse", tf_reverse_, false);
   private_nh_.param("odom_integrator_topic", odom_integrator_topic_, std::string(""));
@@ -616,6 +622,8 @@ void AmclNode::reconfigureCB(AMCLConfig &config, uint32_t level)
   max_particles_ = config.max_particles;
   alpha_slow_ = config.recovery_alpha_slow;
   alpha_fast_ = config.recovery_alpha_fast;
+  uniform_pose_starting_weight_threshold_ = config.uniform_pose_starting_weight_threshold;
+  uniform_pose_deweight_multiplier_ = config.uniform_pose_deweight_multiplier;
   tf_broadcast_ = config.tf_broadcast;
   tf_reverse_ = config.tf_reverse;
 
@@ -626,7 +634,7 @@ void AmclNode::reconfigureCB(AMCLConfig &config, uint32_t level)
   pf_ = pf_alloc(min_particles_, max_particles_,
                  alpha_slow_, alpha_fast_,
                  (pf_init_model_fn_t)AmclNode::uniformPoseGenerator,
-                 (void *)map_);
+                 (void *)this);
   pf_err_ = config.kld_err; 
   pf_z_ = config.kld_z; 
   pf_->pop_err = pf_err_;
@@ -919,21 +927,16 @@ AmclNode::handleMapMessage(const nav_msgs::OccupancyGrid& msg)
   lasers_.clear();
   lasers_update_.clear();
   frame_to_laser_.clear();
+  delete last_laser_data_;
+  last_laser_data_ = NULL;
 
   map_ = convertMap(msg);
-
-  // Index of free space
-  free_space_indices.resize(0);
-  for(int i = 0; i < map_->size_x; i++)
-    for(int j = 0; j < map_->size_y; j++)
-      if(map_->cells[MAP_INDEX(map_,i,j)].occ_state == -1)
-        free_space_indices.push_back(std::make_pair(i,j));
 
   // Create the particle filter
   pf_ = pf_alloc(min_particles_, max_particles_,
                  alpha_slow_, alpha_fast_,
                  (pf_init_model_fn_t)AmclNode::uniformPoseGenerator,
-                 (void *)map_);
+                 (void *)this);
   pf_->pop_err = pf_err_;
   pf_->pop_z = pf_z_;
   pf_set_resample_model(pf_, resample_model_type_);
@@ -999,6 +1002,15 @@ AmclNode::handleMapMessage(const nav_msgs::OccupancyGrid& msg)
     ROS_INFO("Done initializing likelihood field model.");
   }
   laser_->SetMapFactors(laser_off_map_factor_, laser_non_free_space_factor_, laser_non_free_space_radius_);
+
+  // Index of free space
+  // Must be calculated after the occ_dist is setup by the laser model
+  free_space_indices.resize(0);
+  for(int i = 0; i < map_->size_x; i++)
+    for(int j = 0; j < map_->size_y; j++)
+      if(map_->cells[MAP_INDEX(map_,i,j)].occ_state == -1)
+        if(map_occ_dist(map_,i,j) > laser_non_free_space_radius_)
+          free_space_indices.push_back(std::make_pair(i,j));
 
   // In case the initial pose message arrived before the first map,
   // try to apply the initial pose now that the map has arrived.
@@ -1168,13 +1180,49 @@ AmclNode::getOdomPose(tf::Stamped<tf::Pose>& odom_pose,
 pf_vector_t
 AmclNode::uniformPoseGenerator(void* arg)
 {
-  map_t* map = (map_t*)arg;
-  unsigned int rand_index = drand48() * free_space_indices.size();
-  std::pair<int,int> free_point = free_space_indices[rand_index];
+  AmclNode *self = (AmclNode*)arg;
+  map_t* map = self->map_;
+  double good_weight = self->uniform_pose_starting_weight_threshold_;
+  const double deweight_multiplier = self->uniform_pose_deweight_multiplier_;
   pf_vector_t p;
-  p.v[0] = MAP_WXGX(map, free_point.first);
-  p.v[1] = MAP_WYGY(map, free_point.second);
-  p.v[2] = drand48() * 2 * M_PI - M_PI;
+
+  for (;;)
+  {
+    unsigned int rand_index = drand48() * free_space_indices.size();
+    std::pair<int,int> free_point = free_space_indices[rand_index];
+    p.v[0] = MAP_WXGX(map, free_point.first);
+    p.v[1] = MAP_WYGY(map, free_point.second);
+    p.v[2] = drand48() * 2 * M_PI - M_PI;
+
+    // Check and see how "good" this pose is.
+    // Begin with the configured starting weight threshold,
+    // then down-weight each try by the configured deweight multiplier.
+    // A starting weight of 0 or negative means disable this check.
+    if (self->last_laser_data_ != NULL && good_weight > 0.0)
+    {
+      // Create a fake "sample set" of just this pose to score it.
+      pf_sample_t fake_sample;
+      fake_sample.pose.v[0] = p.v[0];
+      fake_sample.pose.v[1] = p.v[1];
+      fake_sample.pose.v[2] = p.v[2];
+      fake_sample.weight = 1.0;
+      pf_sample_set_t fake_sample_set;
+      fake_sample_set.sample_count = 1;
+      fake_sample_set.samples = &fake_sample;
+      fake_sample_set.converged = 0;
+      AMCLLaser::ApplyModelToSampleSet(self->last_laser_data_, &fake_sample_set);
+      if (fake_sample.weight >= good_weight)
+      {
+        // found a good sample.
+        break;
+      }
+      else
+      {
+        // relax our criteria a bit to ensure we will eventually return
+        good_weight *= deweight_multiplier;
+      }
+    }
+  }
 
   return p;
 }
@@ -1189,7 +1237,7 @@ AmclNode::globalLocalizationCallback(std_srvs::Empty::Request& req,
   boost::recursive_mutex::scoped_lock gl(configuration_mutex_);
   ROS_INFO("Initializing with uniform distribution");
   pf_init_model(pf_, (pf_init_model_fn_t)AmclNode::uniformPoseGenerator,
-                (void *)map_);
+                (void *)this);
   ROS_INFO("Global initialisation done!");
   pf_init_ = false;
   return true;
@@ -1362,7 +1410,9 @@ AmclNode::laserReceived(const sensor_msgs::LaserScanConstPtr& laser_scan)
   // If the robot has moved, update the filter
   if(lasers_update_[laser_index])
   {
-    AMCLLaserData ldata;
+    delete last_laser_data_;
+    last_laser_data_ = new AMCLLaserData;
+    AMCLLaserData &ldata = *last_laser_data_;
     ldata.sensor = lasers_[laser_index];
     ldata.range_count = laser_scan->ranges.size();
 
