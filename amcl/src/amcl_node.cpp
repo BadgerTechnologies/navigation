@@ -267,6 +267,8 @@ class AmclNode
     double alpha_slow_, alpha_fast_;
     double uniform_pose_starting_weight_threshold_;
     double uniform_pose_deweight_multiplier_;
+    bool global_localization_active_;
+    double global_localization_alpha_slow_, global_localization_alpha_fast_;
     double z_hit_, z_short_, z_max_, z_rand_, sigma_hit_, lambda_short_;
   //beam skip related params
     bool do_beamskip_;
@@ -281,6 +283,8 @@ class AmclNode
     double laser_off_map_factor_;
     double laser_non_free_space_factor_;
     double laser_non_free_space_radius_;
+    double global_localization_laser_off_map_factor_;
+    double global_localization_laser_non_free_space_factor_;
     odom_model_t odom_model_type_;
     double init_pose_[3];
     double init_cov_[3];
@@ -350,7 +354,8 @@ AmclNode::AmclNode() :
         initial_pose_hyp_(NULL),
         first_map_received_(false),
         first_reconfigure_call_(true),
-        last_laser_data_(NULL)
+        last_laser_data_(NULL),
+        global_localization_active_(false)
 {
   boost::recursive_mutex::scoped_lock l(configuration_mutex_);
 
@@ -404,6 +409,8 @@ AmclNode::AmclNode() :
   private_nh_.param("laser_off_map_factor", laser_off_map_factor_, 1.0);
   private_nh_.param("laser_non_free_space_factor", laser_non_free_space_factor_, 1.0);
   private_nh_.param("laser_non_free_space_radius", laser_non_free_space_radius_, 0.0);
+  private_nh_.param("global_localization_laser_off_map_factor", global_localization_laser_off_map_factor_, 1.0);
+  private_nh_.param("global_localization_laser_non_free_space_factor", global_localization_laser_non_free_space_factor_, 1.0);
   std::string tmp_model_type;
   private_nh_.param("laser_model_type", tmp_model_type, std::string("likelihood_field"));
   if(tmp_model_type == "beam")
@@ -465,6 +472,8 @@ AmclNode::AmclNode() :
   private_nh_.param("recovery_alpha_fast", alpha_fast_, 0.1);
   private_nh_.param("uniform_pose_starting_weight_threshold", uniform_pose_starting_weight_threshold_, 0.0);
   private_nh_.param("uniform_pose_deweight_multiplier", uniform_pose_deweight_multiplier_, 0.0);
+  private_nh_.param("global_localization_alpha_slow", global_localization_alpha_slow_, 0.001);
+  private_nh_.param("global_localization_alpha_fast", global_localization_alpha_fast_, 0.1);
   private_nh_.param("tf_broadcast", tf_broadcast_, true);
   private_nh_.param("tf_reverse", tf_reverse_, false);
   private_nh_.param("odom_integrator_topic", odom_integrator_topic_, std::string(""));
@@ -584,6 +593,8 @@ void AmclNode::reconfigureCB(AMCLConfig &config, uint32_t level)
   laser_off_map_factor_ = config.laser_off_map_factor;
   laser_non_free_space_factor_ = config.laser_non_free_space_factor;
   laser_non_free_space_radius_ = config.laser_non_free_space_radius;
+  global_localization_laser_off_map_factor_ = config.global_localization_laser_off_map_factor;
+  global_localization_laser_non_free_space_factor_ = config.global_localization_laser_non_free_space_factor;
 
   laser_gompertz_a_ = config.laser_gompertz_a;
   laser_gompertz_b_ = config.laser_gompertz_b;
@@ -624,6 +635,8 @@ void AmclNode::reconfigureCB(AMCLConfig &config, uint32_t level)
   alpha_fast_ = config.recovery_alpha_fast;
   uniform_pose_starting_weight_threshold_ = config.uniform_pose_starting_weight_threshold;
   uniform_pose_deweight_multiplier_ = config.uniform_pose_deweight_multiplier;
+  global_localization_alpha_slow_ = config.global_localization_alpha_slow;
+  global_localization_alpha_fast_ = config.global_localization_alpha_fast;
   tf_broadcast_ = config.tf_broadcast;
   tf_reverse_ = config.tf_reverse;
 
@@ -1235,6 +1248,20 @@ AmclNode::globalLocalizationCallback(std_srvs::Empty::Request& req,
     return true;
   }
   boost::recursive_mutex::scoped_lock gl(configuration_mutex_);
+  global_localization_active_ = true;
+  pf_->alpha_slow = global_localization_alpha_slow_;
+  pf_->alpha_fast = global_localization_alpha_fast_;
+  laser_->SetMapFactors(
+      global_localization_laser_off_map_factor_,
+      global_localization_laser_non_free_space_factor_,
+      laser_non_free_space_radius_);
+  for (auto& l : lasers_)
+  {
+    l->SetMapFactors(global_localization_laser_off_map_factor_,
+        global_localization_laser_non_free_space_factor_,
+        laser_non_free_space_radius_);
+  }
+
   ROS_INFO("Initializing with uniform distribution");
   pf_init_model(pf_, (pf_init_model_fn_t)AmclNode::uniformPoseGenerator,
                 (void *)this);
@@ -1272,6 +1299,20 @@ AmclNode::laserReceived(const sensor_msgs::LaserScanConstPtr& laser_scan)
   }
   boost::recursive_mutex::scoped_lock lr(configuration_mutex_);
   int laser_index = -1;
+
+  // Handle corner cases like getting dynamically reconfigured or getting a
+  // new map by de-activating the global localization parameters here if we are
+  // no longer globally localizing.
+  if(!global_localization_active_)
+  {
+    pf_->alpha_slow = alpha_slow_;
+    pf_->alpha_fast = alpha_fast_;
+    laser_->SetMapFactors(laser_off_map_factor_, laser_non_free_space_factor_, laser_non_free_space_radius_);
+    for (auto& l : lasers_)
+    {
+      l->SetMapFactors(laser_off_map_factor_, laser_non_free_space_factor_, laser_non_free_space_radius_);
+    }
+  }
 
   // Do we have the base->base_laser Tx yet?
   if(frame_to_laser_.find(laser_scan->header.frame_id) == frame_to_laser_.end())
@@ -1484,6 +1525,11 @@ AmclNode::laserReceived(const sensor_msgs::LaserScanConstPtr& laser_scan)
     {
       pf_update_resample(pf_);
       resampled = true;
+      if(pf_->converged && global_localization_active_)
+      {
+        ROS_INFO("Global localization converged!");
+        global_localization_active_ = false;
+      }
     }
 
     pf_sample_set_t* set = pf_->sets + pf_->current_set;
