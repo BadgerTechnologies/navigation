@@ -94,6 +94,8 @@ namespace base_local_planner {
 
       const costmap_2d::Costmap2D& costmap_; ///< @brief Allows access of costmap obstacle information
 
+      //! Whether or not we should allow poses in unknown space
+      bool allow_unknown_;
   };
 };
 #endif

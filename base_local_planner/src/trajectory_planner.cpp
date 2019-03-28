@@ -183,6 +183,7 @@ namespace base_local_planner{
     escaping_ = false;
     final_goal_position_valid_ = false;
 
+    allow_unknown_ = ( Costmap2D(costmap).getDefaultValue() == 0 ) ? false : true;
 
     costmap_2d::calculateMinAndMaxDistances(footprint_spec_, inscribed_radius_, circumscribed_radius_);
   }
@@ -465,7 +466,8 @@ namespace base_local_planner{
   double TrajectoryPlanner::pointCost(int x, int y){
     unsigned char cost = costmap_.getCost(x, y);
     //if the cell is in an obstacle the path is invalid
-    if(cost == LETHAL_OBSTACLE || cost == INSCRIBED_INFLATED_OBSTACLE || cost == NO_INFORMATION){
+    if(cost == LETHAL_OBSTACLE || cost == INSCRIBED_INFLATED_OBSTACLE
+        || ( ( cost == NO_INFORMATION ) && !allow_unknown_ ) ){
       return -1;
     }
 
