@@ -1,0 +1,8 @@
+<class_libraries>
+  <library path="liblayers3d">
+    <class type="costmap_3d::OctomapServerLayer"  base_class_type="costmap_3d::Layer">
+      <description>Wraps the OctomapServer object as a 3d costmap layer.</description>
+    </class>
+  </library>
+</class_libraries>
+
