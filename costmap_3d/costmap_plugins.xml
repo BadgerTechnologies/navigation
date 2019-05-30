@@ -1,8 +1,13 @@
 <class_libraries>
-  <library path="liblayers3d">
-    <class type="costmap_3d::OctomapServerLayer"  base_class_type="costmap_3d::Layer">
-      <description>Wraps the OctomapServer object as a 3d costmap layer.</description>
+  <library path="liblayers_3d">
+    <class type="costmap_3d::Costmap3DTo2DLayer"  base_class_type="costmap_2d::Layer">
+      <description>2D costmap layer that tracks 3D costmap updates.<description>
+    </class>
+    <class type="costmap_3d::Costmap3DTo2DLayer3D"  base_class_type="costmap_3d::Layer3D">
+      <description>3D costmap layer that connects the 3D costmap to Costmap3DTo2DLayer instances.<description>
+    </class>
+    <class type="costmap_3d::OctomapServerLayer"  base_class_type="costmap_3d::Layer3D">
+      <description>Wraps the OctomapServer object as a 3D costmap layer.</description>
     </class>
   </library>
 </class_libraries>
-

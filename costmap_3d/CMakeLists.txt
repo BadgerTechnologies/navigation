@@ -32,7 +32,7 @@ catkin_package(
     include
   LIBRARIES
     costmap_3d
-#    layers_3d
+    layers_3d
   CATKIN_DEPENDS
     costmap_2d
     dynamic_reconfigure
@@ -60,18 +60,18 @@ target_link_libraries(costmap_3d
   ${catkin_LIBRARIES}
 )
 
-#add_library(layers_3d
+add_library(layers_3d
 #  plugins/octomap_server_layer.cpp
-#  plugins/costmap_3d_to_2d.cpp
-#)
+  plugins/costmap_3d_to_2d_layer.cpp
+  plugins/costmap_3d_to_2d_layer_3d.cpp
+)
 
-#target_link_libraries(
-#  layers_3d
-#  costmap_3d
-#)
+target_link_libraries(layers_3d
+  costmap_3d
+)
 
 add_dependencies(costmap_3d costmap_3d_gencfg)
-#add_dependencies(layers_3d costmap_3d_gencfg)
+add_dependencies(layers_3d costmap_3d_gencfg)
 
 #add_executable(costmap_3d_node src/costmap_3d_node.cpp)
 #target_link_libraries(costmap_3d_node

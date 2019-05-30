@@ -41,6 +41,8 @@
 #include <string>
 #include <limits>
 #include <mutex>
+#include <map>
+#include <functional>
 #include <costmap_3d/layer_3d.h>
 #include <costmap_3d/costmap_3d.h>
 #include <costmap_2d/layered_costmap.h>
@@ -120,6 +122,25 @@ public:
   void getBounds(geometry_msgs::Point* min, geometry_msgs::Point* max);
   void setBounds(const geometry_msgs::Point& min, const geometry_msgs::Point& max);
 
+  // Pass the complete costmap, the delta map from the last update, and the
+  // bounds map on every completion.
+  using UpdateCompleteCallback = std::function<void(const Costmap3D& map, const Costmap3D& delta_map, const Costmap3D& bounds_map)>;
+
+  /**
+   * @brief Register a callback to be called when a 3D costmap update is complete.
+   */
+  void registerUpdateCompleteCallback(const std::string callback_id, UpdateCompleteCallback cb);
+
+  /**
+   * @brief Unregister a callback to be called when a 3D costmap update is complete.
+   */
+  void unregisterUpdateCompleteCallback(const std::string callback_id);
+
+  /**
+   * @brief Get a pointer to the corresponding 2D layered costmap.
+   */
+  costmap_2d::LayeredCostmap* getLayeredCostmap2D() {return layered_costmap_2d_;}
+
 private:
   // Lock must be held while calling this internal function
   void sizeChange();
@@ -152,6 +173,7 @@ private:
   costmap_2d::LayeredCostmap* layered_costmap_2d_;
 
   std::vector<boost::shared_ptr<Layer3D>> plugins_;
+  std::map<std::string, UpdateCompleteCallback> update_complete_callbacks_;
 
   // The 3D footprint is described in the SRDF.
 

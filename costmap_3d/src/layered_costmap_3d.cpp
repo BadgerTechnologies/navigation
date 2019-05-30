@@ -144,7 +144,29 @@ void LayeredCostmap3D::updateMap(geometry_msgs::Pose robot_pose)
   Costmap3D map_delta(costmap_->getResolution());
   map_delta.setTreeValues(costmap_.get(), &bounds_map);
 
-  // XXX PUBLISH
+  for (auto cb : update_complete_callbacks_)
+  {
+    cb.second(*costmap_, map_delta, bounds_map);
+  }
+
+  // XXX TODO make a publisher which registers for the callback and publishes
+  // the map?
+}
+
+void LayeredCostmap3D::registerUpdateCompleteCallback(const std::string callback_id, UpdateCompleteCallback cb)
+{
+  std::lock_guard<LayeredCostmap3D> lock(*this);
+  update_complete_callbacks_[callback_id] = cb;
+}
+
+void LayeredCostmap3D::unregisterUpdateCompleteCallback(const std::string callback_id)
+{
+  std::lock_guard<LayeredCostmap3D> lock(*this);
+  auto it = update_complete_callbacks_.find(callback_id);
+  if (it != update_complete_callbacks_.end())
+  {
+    update_complete_callbacks_.erase(it);
+  }
 }
 
 void LayeredCostmap3D::reset()
@@ -170,7 +192,7 @@ void LayeredCostmap3D::deactivate()
 {
   for (auto plugin : plugins_)
   {
-    plugin->activate();
+    plugin->deactivate();
   }
 }
 
