@@ -61,6 +61,7 @@ const Cost LETHAL = 10.0;
  * but greater than zero cost for that space */
 
 using Costmap3DIndex = octomap::OcTreeKey;
+using Costmap3DIndexEntryType = octomap::key_type;
 
 class Costmap3D : public octomap::OcTree
 {

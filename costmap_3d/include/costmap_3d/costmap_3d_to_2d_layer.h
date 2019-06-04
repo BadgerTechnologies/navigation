@@ -37,6 +37,7 @@
 #ifndef COSTMAP_3D_COSTMAP_3D_TO_2D_LAYER_H_
 #define COSTMAP_3D_COSTMAP_3D_TO_2D_LAYER_H_
 
+#include <unordered_map>
 #include <ros/ros.h>
 #include <costmap_2d/costmap_layer.h>
 #include <costmap_2d/layered_costmap.h>
@@ -68,6 +69,29 @@ public:
   virtual void updateFrom3D(const Costmap3D& map, const Costmap3D& delta, const Costmap3D& bounds_map);
 
 private:
+  struct OccupancyTrackingHash
+  {
+    std::size_t operator()(const std::pair<int, int>& p) const
+    {
+      return p.first + p.second*1447;
+    }
+  };
+  class OccupancyTrackingValue
+  {
+  public:
+    uint8_t getCost() const {return cost_;}
+    void update(int z, Cost cost);
+    void erase(int z);
+  protected:
+    using FiniteCostsType = std::map<int, uint8_t>;
+    void erase(FiniteCostsType::iterator it);
+    uint8_t toCostmap2D(Cost value) const;
+  private:
+    uint8_t cost_;
+    FiniteCostsType finite_costs_;
+    std::map<uint8_t, uint32_t> finite_costs_counters_;
+  };
+  std::unordered_map<std::pair<int, int>, OccupancyTrackingValue, OccupancyTrackingHash> tracking_map_;
   void reconfigureCB(costmap_3d::GenericPluginConfig &config, uint32_t level);
   dynamic_reconfigure::Server<costmap_3d::GenericPluginConfig> *dsrv_;
   bool use_maximum_;
