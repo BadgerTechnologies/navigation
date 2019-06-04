@@ -146,7 +146,7 @@ void LayeredCostmap3D::updateMap(geometry_msgs::Pose robot_pose)
 
   for (auto cb : update_complete_callbacks_)
   {
-    cb.second(*costmap_, map_delta, bounds_map);
+    cb.second(this, map_delta, bounds_map);
   }
 
   // XXX TODO make a publisher which registers for the callback and publishes

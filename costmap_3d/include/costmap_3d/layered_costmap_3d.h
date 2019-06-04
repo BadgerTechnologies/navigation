@@ -124,7 +124,9 @@ public:
 
   // Pass the complete costmap, the delta map from the last update, and the
   // bounds map on every completion.
-  using UpdateCompleteCallback = std::function<void(const Costmap3D& map, const Costmap3D& delta_map, const Costmap3D& bounds_map)>;
+  using UpdateCompleteCallback = std::function<void(LayeredCostmap3D* layered_costmap_3d,
+                                                    const Costmap3D& delta_map,
+                                                    const Costmap3D& bounds_map)>;
 
   /**
    * @brief Register a callback to be called when a 3D costmap update is complete.

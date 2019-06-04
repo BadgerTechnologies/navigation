@@ -60,6 +60,8 @@ void Costmap3DTo2DLayer::onInitialize()
 {
   ros::NodeHandle nh("~/" + name_);
 
+  default_value_ = costmap_2d::NO_INFORMATION;
+
   reset();
 
   if (dsrv_)
@@ -110,7 +112,6 @@ void Costmap3DTo2DLayer::deactivate()
 void Costmap3DTo2DLayer::reset()
 {
   super::resetMaps();
-  tracking_map_.clear();
   current_ = false;
   copy_full_map_ = true;
 }
@@ -118,7 +119,66 @@ void Costmap3DTo2DLayer::reset()
 void Costmap3DTo2DLayer::updateBounds(double robot_x, double robot_y, double robot_yaw, double* min_x, double* min_y,
                                double* max_x, double* max_y)
 {
-  useExtraBounds(min_x, min_y, max_x, max_y);
+  if (layered_costmap_->isRolling())
+  {
+    costmap_2d::Costmap2D* master = layered_costmap_->getCostmap();
+    if (getOriginX() != master->getOriginX() || getOriginY() != master->getOriginY())
+    {
+      updateOrigin(robot_x - getSizeInMetersX() / 2, robot_y - getSizeInMetersY() / 2);
+      // We could attempt to see if we only shifted in X or Y and minimize the
+      // impact on bounds. However, prefer the simplicity of just updating
+      // everything on a shift.
+      addExtraBounds(getOriginX(), getOriginY(), getSizeInMetersX(), getSizeInMetersY());
+    }
+  }
+  if (enabled_)
+  {
+    {
+      // First erase the bounding-box of the 2D map.
+      int min_map_x, min_map_y;
+      int max_map_x, max_map_y;
+      worldToMapEnforceBounds(extra_min_x_, extra_min_y_, min_map_x, min_map_y);
+      worldToMapEnforceBounds(extra_max_x_, extra_max_y_, max_map_x, max_map_y);
+      for (int row = min_map_y; row <= max_map_y; ++row)
+      {
+        const int row_len = (max_map_x - min_map_x) + 1;
+        const int row_step = size_x_;
+        memset(costmap_ + min_map_x + row * row_step, default_value_, row_len);
+      }
+    }
+
+    {
+      // Update the regions that have changed
+      std::lock_guard<LayeredCostmap3D> lock_layered_costmap_3d(*layered_costmap_3d_);
+      // Create a bound-box iterator over the 3D costmap.
+      const Costmap3D* master_3d = layered_costmap_3d_->getCostmap3D();
+      Costmap3DIndex min_index, max_index;
+      master_3d->coordToKeyClamped(extra_min_x_, extra_min_y_, -std::numeric_limits<double>::max(),
+                                   min_index);
+      master_3d->coordToKeyClamped(extra_max_x_, extra_max_y_, std::numeric_limits<double>::max(),
+                                   max_index);
+      auto it = master_3d->begin_leafs_bbx(min_index, max_index);
+      auto end = master_3d->end_leafs_bbx();
+
+      while (it != end)
+      {
+        double x = it.getX();
+        double y = it.getY();
+        unsigned int map_row, map_col;
+        if (worldToMap(x, y, map_row, map_col))
+        {
+          const unsigned int map_index = getIndex(map_row, map_col);
+          const unsigned char cost = toCostmap2D(it->getValue());
+          if (costmap_[map_index] == costmap_2d::NO_INFORMATION || cost > costmap_[map_index])
+          {
+            costmap_[map_index] = cost;
+          }
+        }
+        ++it;
+      }
+    }
+    useExtraBounds(min_x, min_y, max_x, max_y);
+  }
 }
 
 void Costmap3DTo2DLayer::updateCosts(costmap_2d::Costmap2D& master_grid, int min_i, int min_j, int max_i, int max_j)
@@ -129,50 +189,41 @@ void Costmap3DTo2DLayer::updateCosts(costmap_2d::Costmap2D& master_grid, int min
     updateWithMax(master_grid, min_i, min_j, max_i, max_j);
 }
 
-void Costmap3DTo2DLayer::updateFrom3D(const Costmap3D& map, const Costmap3D& delta, const Costmap3D& bounds_map)
+void Costmap3DTo2DLayer::updateFrom3D(LayeredCostmap3D* layered_costmap_3d, const Costmap3D& delta, const Costmap3D& bounds_map)
 {
+  // cache a pointer to the 3d layered costmap to use later
+  layered_costmap_3d_ = layered_costmap_3d;
+
   // Note: this function is only ever called during the costmap update
-  // process, so we do not need to worry about synchrnoization w/ the layered
+  // process, so we do not need to worry about synchronization w/ the layered
   // costmap.
   current_ = true;
 
+  // Get our extra bounds added for this update.
   Costmap3D::iterator it, end;
-  if (!copy_full_map_)
-  {
-    // erase all entries that are in bound_map
-    it = map.begin_leafs();
-    end = map.end_leafs();
-    for(; it != end; ++it)
-    {
-      // TODO ME
-    }
-  }
   if (copy_full_map_)
   {
-    it = map.begin_leafs();
-    end = map.end_leafs();
+    it = layered_costmap_3d_->getCostmap3D()->begin_leafs();
+    end = layered_costmap_3d_->getCostmap3D()->end_leafs();
     copy_full_map_ = false;
   }
   else
   {
-    it = delta.begin_leafs();
-    end = delta.end_leafs();
+    it = bounds_map.begin_leafs();
+    end = bounds_map.end_leafs();
   }
 
-  // copy the whole 3D map to the 2D tracking map
-  for(; it != end; ++it)
+  while (it != end)
   {
-    auto k = it.getKey();
-    auto half_size = it.getSize() / 2.0;
-    auto x = it.getX();
-    auto y = it.getY();
-    // need to update all appropriate entries based on size/depth
-    tracking_map_[std::make_pair(k[0], k[1])].update(k[2], it->getValue());
+    double half_size = it.getSize() / 2.0;
+    double x = it.getX();
+    double y = it.getY();
     addExtraBounds(x - half_size, y - half_size, x + half_size, y + half_size);
+    ++it;
   }
 }
 
-uint8_t Costmap3DTo2DLayer::OccupancyTrackingValue::toCostmap2D(Cost value) const
+unsigned char Costmap3DTo2DLayer::toCostmap2D(Cost value) const
 {
   if (value >= LETHAL) return costmap_2d::LETHAL_OBSTACLE;
   if (value == FREE) return costmap_2d::FREE_SPACE;
@@ -181,81 +232,6 @@ uint8_t Costmap3DTo2DLayer::OccupancyTrackingValue::toCostmap2D(Cost value) cons
   // return a linear interpolation of 3D Cost values to 2D cost values
   return static_cast<uint8_t>((costmap_2d::LETHAL_OBSTACLE - costmap_2d::FREE_SPACE) *
                               (value - FREE) / (LETHAL - FREE)) + costmap_2d::FREE_SPACE;
-}
-
-void Costmap3DTo2DLayer::OccupancyTrackingValue::update(int z, Cost cost)
-{
-  uint8_t new_cost = toCostmap2D(cost);
-  auto it = finite_costs_.find(z);
-
-  if (it != finite_costs_.end() && it->second == new_cost)
-  {
-    // nothing to do, the update is the same thing.
-  }
-  else if (new_cost == costmap_2d::NO_INFORMATION)
-  {
-    // no information is special. erase this entry if it exists.
-    if (it != finite_costs_.end())
-    {
-      erase(it);
-    }
-  }
-  else
-  {
-    if (it != finite_costs_.end())
-    {
-      auto counter_it = finite_costs_counters_.find(it->second);
-      assert(counter_it != finite_costs_counters_.end());
-      assert(counter_it->second > 0);
-      --(counter_it->second);
-      if (counter_it->second == 0)
-      {
-        finite_costs_counters_.erase(counter_it);
-      }
-      it->second = new_cost;
-    }
-    else
-    {
-      finite_costs_[z] = new_cost;
-    }
-    ++(finite_costs_counters_[new_cost]);
-    // largest cost counter in the map will be the end
-    cost_ = finite_costs_counters_.rbegin()->first;
-  }
-}
-
-void Costmap3DTo2DLayer::OccupancyTrackingValue::erase(int z)
-{
-  auto it = finite_costs_.find(z);
-  if (it != finite_costs_.end())
-  {
-    erase(it);
-  }
-}
-
-void Costmap3DTo2DLayer::OccupancyTrackingValue::erase(FiniteCostsType::iterator it)
-{
-  auto counter_it = finite_costs_counters_.find(it->second);
-  assert(counter_it != finite_costs_counters_.end());
-  assert(counter_it->second > 0);
-  --(counter_it->second);
-  if (counter_it->second == 0)
-  {
-    finite_costs_counters_.erase(counter_it);
-    if (it->second == cost_)
-    {
-      if (finite_costs_counters_.size() > 0)
-      {
-        // largest cost counter in the map will be the end
-        cost_ = finite_costs_counters_.rbegin()->first;
-      }
-      else
-      {
-        cost_ = costmap_2d::NO_INFORMATION;
-      }
-    }
-  }
-  finite_costs_.erase(it);
 }
 
 }  // namespace costmap_2d
