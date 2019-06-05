@@ -37,6 +37,9 @@
 #ifndef COSTMAP_3D_OCTOMAP_SERVER_LAYER_3D_H_
 #define COSTMAP_3D_OCTOMAP_SERVER_LAYER_3D_H_
 
+#include <memory>
+#include <dynamic_reconfigure/server.h>
+#include <costmap_3d/GenericPluginConfig.h>
 #include <costmap_3d/costmap_layer_3d.h>
 #include <octomap_msgs/Octomap.h>
 #include <octomap_msgs/OctomapUpdate.h>
@@ -76,7 +79,10 @@ protected:
   virtual void mapUpdateInternal(const octomap_msgs::Octomap* map_msg,
                                  const octomap_msgs::Octomap* bounds_msg);
 
+  virtual void reconfigureCallback(costmap_3d::GenericPluginConfig &config, uint32_t level);
+
   ros::NodeHandle pnh_;
+  std::shared_ptr<dynamic_reconfigure::Server<costmap_3d::GenericPluginConfig>> dsrv_;
   std::string map_topic_;
   std::string map_update_topic_;
   std::string reset_srv_name_;

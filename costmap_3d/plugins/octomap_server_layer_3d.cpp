@@ -38,6 +38,9 @@
 #include <std_srvs/Empty.h>
 #include <octomap_msgs/BoundingBoxQuery.h>
 #include <octomap_msgs/conversions.h>
+#include <pluginlib/class_list_macros.h>
+
+PLUGINLIB_EXPORT_CLASS(costmap_3d::OctomapServerLayer3D, costmap_3d::Layer3D)
 
 namespace costmap_3d
 {
@@ -78,6 +81,17 @@ void OctomapServerLayer3D::initialize(LayeredCostmap3D* parent, std::string name
                   "map_update_topic: " << map_update_topic_ <<
                   "reset_srv_name: " << reset_srv_name_ <<
                   "erase_bbx_srv_name: " << erase_bbx_srv_name_);
+
+  dsrv_.reset(new dynamic_reconfigure::Server<costmap_3d::GenericPluginConfig>(pnh_));
+  dsrv_->setCallback(std::bind(&OctomapServerLayer3D::reconfigureCallback, this,
+                               std::placeholders::_1, std::placeholders::_2));
+}
+
+void OctomapServerLayer3D::reconfigureCallback(costmap_3d::GenericPluginConfig &config, uint32_t level)
+{
+  std::lock_guard<Layer3D> lock(*this);
+  enabled_ = config.enabled;
+  combination_method_ = config.combination_method;
 }
 
 void OctomapServerLayer3D::deactivate()

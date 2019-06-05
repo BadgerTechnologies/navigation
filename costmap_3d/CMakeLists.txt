@@ -73,17 +73,17 @@ target_link_libraries(layers_3d
 add_dependencies(costmap_3d costmap_3d_gencfg)
 add_dependencies(layers_3d costmap_3d_gencfg)
 
-#add_executable(costmap_3d_node src/costmap_3d_node.cpp)
-#target_link_libraries(costmap_3d_node
-#    costmap_3d
-#    )
+add_executable(costmap_3d_node src/costmap_3d_node.cpp)
+target_link_libraries(costmap_3d_node
+    costmap_3d
+    )
 
 ## TODO: Configure Tests
 
-#install(TARGETS
-#    costmap_3d_node
-#    DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
-#)
+install(TARGETS
+    costmap_3d_node
+    DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
 
 install(TARGETS
     costmap_3d

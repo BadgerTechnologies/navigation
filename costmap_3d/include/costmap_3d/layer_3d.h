@@ -56,7 +56,7 @@ class Layer3D
 {
 public:
   Layer3D();
-  virtual ~Layer3D() = 0;
+  virtual ~Layer3D();
 
   /** @brief Add nodes to bounds_map for any cells that have changed
    *

@@ -1,21 +1,12 @@
 <launch>
-  <!-- 
-  NOTE: You'll need to bring up something that publishes sensor data (see
-  rosstage), something that publishes a map (see map_server), and something to
-  visualize a costmap (see nav_view), to see things work.
+  <!--
+  NOTE: You'll need to bring up an octomap server to publish the octomap data
+  and rviz to visualize the results.
 
-  Also, on a real robot, you'd want to set the "use_sim_time" parameter to false, or just not set it.
+  Also, if running from bagfiles, set the "use_sim_time" parameter to true
   -->
-  <param name="/use_sim_time" value="true"/>
-
-  <!-- Publishes the voxel grid to rviz for display -->
-  <node pkg="costmap_2d" type="costmap_2d_markers" name="voxel_visualizer">
-    <remap from="voxel_grid" to="costmap/voxel_grid"/>
-  </node>
-
-  <!-- Run the costmap node -->
-  <node name="costmap_node" pkg="costmap_2d" type="costmap_2d_node" >
-    <rosparam file="$(find costmap_2d)/launch/example_params.yaml" command="load" ns="costmap" />
+  <node name="costmap_node" pkg="costmap_3d" type="costmap_3d_node" >
+    <rosparam file="$(find costmap_3d)/launch/example_params.yaml" command="load" ns="costmap" />
   </node>
 
 </launch>

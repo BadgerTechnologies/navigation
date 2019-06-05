@@ -6,8 +6,8 @@
     <class type="costmap_3d::Costmap3DTo2DLayer3D"  base_class_type="costmap_3d::Layer3D">
       <description>3D costmap layer that connects the 3D costmap to Costmap3DTo2DLayer instances.<description>
     </class>
-    <class type="costmap_3d::OctomapServerLayer"  base_class_type="costmap_3d::Layer3D">
-      <description>Wraps the OctomapServer object as a 3D costmap layer.</description>
+    <class type="costmap_3d::OctomapServerLayer3D"  base_class_type="costmap_3d::Layer3D">
+      <description>Updates a 3D costmap layer from an octomap server.</description>
     </class>
   </library>
 </class_libraries>

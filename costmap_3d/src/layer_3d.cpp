@@ -41,6 +41,8 @@ namespace costmap_3d
 
 Layer3D::Layer3D() {}
 
+Layer3D::~Layer3D() {}
+
 void Layer3D::initialize(LayeredCostmap3D* parent, std::string name, tf::TransformListener *tf)
 {
   layered_costmap_3d_ = parent;

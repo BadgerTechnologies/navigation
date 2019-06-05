@@ -34,10 +34,10 @@
  *
  * Author: C. Andy Martin
  *********************************************************************/
-#include "costmap_2d/cost_values.h"
-#include "costmap_3d/GenericPluginConfig.h"
-#include "costmap_3d/costmap_3d.h"
 #include <costmap_3d/costmap_3d_to_2d_layer.h>
+#include <costmap_2d/cost_values.h>
+#include <costmap_3d/GenericPluginConfig.h>
+#include <costmap_3d/costmap_3d.h>
 #include <pluginlib/class_list_macros.h>
 
 PLUGINLIB_EXPORT_CLASS(costmap_3d::Costmap3DTo2DLayer, costmap_2d::Layer)

@@ -35,6 +35,7 @@
  * Author: C. Andy Martin
  *********************************************************************/
 #include <costmap_3d/costmap_layer_3d.h>
+#include <costmap_3d/GenericPluginConfig.h>
 
 namespace costmap_3d
 {
@@ -79,16 +80,15 @@ void CostmapLayer3D::updateCosts(const Costmap3D& bounds_map, Costmap3D* master_
   {
     switch (combination_method_)
     {
-      case OVERWRITE:
+      case GenericPlugin_Overwrite:
         master_map->setTreeValues(costmap_.get(), &bounds_map, false);
         break;
-      case MAXIMUM:
+      case GenericPlugin_Maximum:
         master_map->setTreeValues(costmap_.get(), &bounds_map, true);
         break;
       default:
-      case NOTHING:
-        // In case this was a mistake, give info one time that we are using
-        // NOTHING
+      case GenericPlugin_Nothing:
+        // In case this was a mistake, give info once that we are using NOTHING
         ROS_INFO_STREAM_ONCE("costmap layer '" << name_ << "' combination method NOTHING");
         break;
     }

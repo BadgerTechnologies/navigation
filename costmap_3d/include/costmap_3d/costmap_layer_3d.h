@@ -200,7 +200,7 @@ protected:
   Costmap3DPtr changed_cells_;
   bool current_;
   bool enabled_;
-  CombinationMethod combination_method_;
+  int combination_method_;
 };
 
 }  // namespace costmap_3d

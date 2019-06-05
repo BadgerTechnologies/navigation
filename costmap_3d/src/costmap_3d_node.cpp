@@ -34,58 +34,16 @@
  *
  * Author: C. Andy Martin
  *********************************************************************/
-#include <costmap_3d/costmap_3d_to_2d_layer_3d.h>
-#include <costmap_3d/costmap_3d_to_2d_layer.h>
-#include <pluginlib/class_list_macros.h>
+#include <ros/ros.h>
+#include <costmap_3d/costmap_3d_ros.h>
 
-PLUGINLIB_EXPORT_CLASS(costmap_3d::Costmap3DTo2DLayer3D, costmap_3d::Layer3D)
-
-namespace costmap_3d
+int main(int argc, char* argv[])
 {
+  ros::init(argc, argv, "costmap_3d_node");
+  tf::TransformListener tf(ros::Duration(10));
+  costmap_3d::Costmap3DROS costmap("costmap_3d_node", tf);
 
-Costmap3DTo2DLayer3D::Costmap3DTo2DLayer3D()
-{
+  ros::spin();
+
+  return 0;
 }
-
-Costmap3DTo2DLayer3D::~Costmap3DTo2DLayer3D()
-{
-  deactivate();
-}
-
-void Costmap3DTo2DLayer3D::activate()
-{
-  // Find any costmap 3D to 2D layers and connect them to the 3D costmap
-  costmap_2d::LayeredCostmap* layered_costmap_2d = layered_costmap_3d_->getLayeredCostmap2D();
-  costmap_3d::Costmap3DTo2DLayer* layer_2d;
-  for (auto plugin_2d : *layered_costmap_2d->getPlugins())
-  {
-    layer_2d = dynamic_cast<costmap_3d::Costmap3DTo2DLayer*>(plugin_2d.get());
-    if (layer_2d != nullptr)
-    {
-      layered_costmap_3d_->registerUpdateCompleteCallback(
-          layer_2d->getName(),
-          std::bind(&Costmap3DTo2DLayer::updateFrom3D,
-                    layer_2d,
-                    std::placeholders::_1,
-                    std::placeholders::_2,
-                    std::placeholders::_3));
-    }
-  }
-}
-
-void Costmap3DTo2DLayer3D::deactivate()
-{
-  // Find any costmap 3D to 2D layers and disconnect them from the 3D costmap
-  costmap_2d::LayeredCostmap* layered_costmap_2d = layered_costmap_3d_->getLayeredCostmap2D();
-  costmap_3d::Costmap3DTo2DLayer* layer_2d;
-  for (auto plugin_2d : *layered_costmap_2d->getPlugins())
-  {
-    layer_2d = dynamic_cast<costmap_3d::Costmap3DTo2DLayer*>(plugin_2d.get());
-    if (layer_2d != nullptr)
-    {
-      layered_costmap_3d_->unregisterUpdateCompleteCallback(layer_2d->getName());
-    }
-  }
-}
-
-}  // namespace costmap_3d
