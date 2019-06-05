@@ -186,7 +186,7 @@ void CostmapLayer3D::resetAABBUnlocked(Costmap3DIndex min, Costmap3DIndex max)
                                  std::placeholders::_4));
 }
 
-void CostmapLayer3D::touch(const Costmap3D& touch_map)
+void CostmapLayer3D::touch(const octomap::OcTree& touch_map)
 {
   if (changed_cells_)
   {
@@ -206,6 +206,23 @@ void CostmapLayer3D::touchKeyAtDepth(const octomap::OcTreeKey& key, unsigned int
   {
     changed_cells_->setNodeValueAtDepth(key, depth, LETHAL);
   }
+}
+
+void CostmapLayer3D::updateCells(const octomap::OcTree& value_map, const octomap::OcTree& bounds_map,
+                                 Cost occupied_threshold)
+{
+  if (costmap_)
+  {
+    // Erase the map in the bounds region then set to either LETHAL or FREE
+    // based on the given threshold applied to the value map values.
+    costmap_->setTreeValues(&value_map, &bounds_map, false, true,
+                            std::bind([](Cost thresh, const Costmap3D::NodeType* value_node, Costmap3D::NodeType* node)
+                                      {node->setValue(value_node->getValue() >= thresh ? LETHAL : FREE);},
+                                      occupied_threshold,
+                                      std::placeholders::_1,
+                                      std::placeholders::_2));
+  }
+  touch(bounds_map);
 }
 
 void CostmapLayer3D::updateCell(const geometry_msgs::Point& point, bool mark)

@@ -148,9 +148,6 @@ void LayeredCostmap3D::updateMap(geometry_msgs::Pose robot_pose)
   {
     cb.second(this, map_delta, bounds_map);
   }
-
-  // XXX TODO make a publisher which registers for the callback and publishes
-  // the map?
 }
 
 void LayeredCostmap3D::registerUpdateCompleteCallback(const std::string callback_id, UpdateCompleteCallback cb)

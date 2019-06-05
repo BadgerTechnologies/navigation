@@ -39,6 +39,7 @@
 
 #include <costmap_2d/costmap_2d_ros.h>
 #include <costmap_3d/layered_costmap_3d.h>
+#include <costmap_3d/costmap_3d_publisher.h>
 #include <costmap_3d/Costmap3DConfig.h>
 #include <dynamic_reconfigure/server.h>
 #include <pluginlib/class_loader.h>
@@ -142,13 +143,13 @@ public:
   virtual double footprintSignedDistance(geometry_msgs::Pose pose, double padding = NAN);
 
 protected:
-  LayeredCostmap3D* layered_costmap_3d_;
+  std::shared_ptr<LayeredCostmap3D> layered_costmap_3d_;
 
 private:
   void reconfigureCB(costmap_3d::Costmap3DConfig &config, uint32_t level);
   pluginlib::ClassLoader<Layer3D> plugin_loader_;
-//  Costmap3DPublisher* publisher_;
-  dynamic_reconfigure::Server<costmap_3d::Costmap3DConfig> *dsrv_;
+  std::shared_ptr<Costmap3DPublisher> publisher_;
+  std::shared_ptr<dynamic_reconfigure::Server<costmap_3d::Costmap3DConfig>> dsrv_;
 
   float footprint_3d_padding_;
 };

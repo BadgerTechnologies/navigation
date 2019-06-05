@@ -43,18 +43,16 @@ namespace costmap_3d
 
 Costmap3DROS::Costmap3DROS(std::string name, tf::TransformListener& tf) :
     super(name, tf),
-    layered_costmap_3d_(NULL),
     plugin_loader_("costmap_3d", "costmap_3d::Layer3D")
 {
-  ros::NodeHandle private_nh("~/" + name + "/costmap_3d");
-  ros::NodeHandle g_nh;
+  ros::NodeHandle private_nh("~/" + name + "/");
 
-  layered_costmap_3d_ = new LayeredCostmap3D(layered_costmap_);
+  layered_costmap_3d_.reset(new LayeredCostmap3D(layered_costmap_));
 
-  if (private_nh.hasParam("plugins"))
+  if (private_nh.hasParam("costmap_3d/plugins"))
   {
     XmlRpc::XmlRpcValue my_list;
-    private_nh.getParam("plugins", my_list);
+    private_nh.getParam("costmap_3d/plugins", my_list);
     for (int32_t i = 0; i < my_list.size(); ++i)
     {
       std::string pname = static_cast<std::string>(my_list[i]["name"]);
@@ -62,15 +60,14 @@ Costmap3DROS::Costmap3DROS(std::string name, tf::TransformListener& tf) :
       ROS_INFO("Using 3D plugin \"%s\"", pname.c_str());
 
       boost::shared_ptr<Layer3D> plugin = plugin_loader_.createInstance(type);
-      plugin->initialize(layered_costmap_3d_, name + "/costmap_3d/" + pname, &tf_);
+      plugin->initialize(layered_costmap_3d_.get(), name + "/costmap_3d/" + pname, &tf_);
       layered_costmap_3d_->addPlugin(plugin);
     }
   }
 
-//  publisher_ = new Costmap3DPublisher(&private_nh, layered_costmap_3d_->getCostmap(), global_frame_, "costmap3d",
-//                                      always_send_full_costmap);
+  publisher_.reset(new Costmap3DPublisher(private_nh, layered_costmap_3d_.get(), "costmap_3d"));
 
-  dsrv_ = new dynamic_reconfigure::Server<Costmap3DConfig>(ros::NodeHandle("~/" + name + "/costmap_3d"));
+  dsrv_.reset(new dynamic_reconfigure::Server<Costmap3DConfig>(ros::NodeHandle("~/" + name + "/costmap_3d")));
   dynamic_reconfigure::Server<Costmap3DConfig>::CallbackType cb = std::bind(&Costmap3DROS::reconfigureCB,
                                                                             this,
                                                                             std::placeholders::_1,
@@ -80,9 +77,8 @@ Costmap3DROS::Costmap3DROS(std::string name, tf::TransformListener& tf) :
 
 Costmap3DROS::~Costmap3DROS()
 {
-  delete dsrv_;
-//  delete publisher_;
-  delete layered_costmap_3d_;
+  // Publisher must be freed before the 3D costmap
+  publisher_.reset();
 }
 
 void Costmap3DROS::reconfigureCB(Costmap3DConfig &config, uint32_t level)

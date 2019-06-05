@@ -51,7 +51,7 @@ add_library(costmap_3d
   src/layer_3d.cpp
   src/layered_costmap_3d.cpp
   src/costmap_3d_ros.cpp
-#  src/costmap_3d_publisher.cpp
+  src/costmap_3d_publisher.cpp
   src/costmap_layer_3d.cpp
 )
 

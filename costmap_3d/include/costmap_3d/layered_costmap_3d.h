@@ -75,6 +75,7 @@ public:
    */
   void updateMap(geometry_msgs::Pose robot_pose);
 
+  std::string getGlobalFrameID() const {return layered_costmap_2d_->getGlobalFrameID();}
   /**
    * @brief Activate each layer (if deactivated).
    */

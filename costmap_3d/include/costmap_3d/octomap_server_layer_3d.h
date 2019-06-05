@@ -37,8 +37,9 @@
 #ifndef COSTMAP_3D_OCTOMAP_SERVER_LAYER_3D_H_
 #define COSTMAP_3D_OCTOMAP_SERVER_LAYER_3D_H_
 
-#include <octomap_server/OctomapServer.h>
 #include <costmap_3d/costmap_layer_3d.h>
+#include <octomap_msgs/Octomap.h>
+#include <octomap_msgs/OctomapUpdate.h>
 
 namespace costmap_3d
 {
@@ -50,10 +51,7 @@ public:
   OctomapServerLayer3D();
   virtual ~OctomapServerLayer3D();
 
-  virtual void updateBounds(const geometry_msgs::Pose robot_pose,
-                            const geometry_msgs::Point& rolled_min,
-                            const geometry_msgs::Point& rolled_max,
-                            Costmap3D* bounds_map);
+  virtual void initialize(LayeredCostmap3D* parent, std::string name, tf::TransformListener *tf);
 
   /** @brief Deactivate this layer, unsubscribing.
    */
@@ -62,16 +60,31 @@ public:
   /** @brief Activate this layer, subscribing. */
   virtual void activate();
 
-  // Forward the reset to the octomap server as well
+  /** @brief Forward the reset to the octomap server as well. */
   virtual void reset();
 
+  /** @brief Force a full transfer on resolution change. */
   virtual void matchSize(const geometry_msgs::Point& min, const geometry_msgs::Point& max, double resolution);
 
 protected:
-  // Forward the reset to the octomap server as well
+  /** @brief Forward the bound box reset to the octomap server as well. */
   virtual void resetAABBUnlocked(Costmap3DIndex min, Costmap3DIndex max);
 
-  std::shared_ptr<octomap_server::OctomapServer> octomap_server_;
+  virtual void mapCallback(const octomap_msgs::OctomapConstPtr& map_msg);
+  virtual void mapUpdateCallback(const octomap_msgs::OctomapUpdateConstPtr& map_update_msg);
+
+  virtual void mapUpdateInternal(const octomap_msgs::Octomap* map_msg,
+                                 const octomap_msgs::Octomap* bounds_msg);
+
+  ros::NodeHandle pnh_;
+  std::string map_topic_;
+  std::string map_update_topic_;
+  std::string reset_srv_name_;
+  std::string erase_bbx_srv_name_;
+  ros::ServiceClient reset_srv_;
+  ros::ServiceClient erase_bbx_srv_;
+  ros::Subscriber map_sub_;
+  ros::Subscriber map_update_sub_;
 };
 
 }  // namespace costmap_3d

@@ -132,9 +132,9 @@ public:
 protected:
   virtual void resetAABBUnlocked(Costmap3DIndex min, Costmap3DIndex max);
 
-  /** @brief Touch all the cells in the given costmap.
+  /** @brief Touch all the cells present in the given OcTree.
    * This layer must be holding the lock to make this call. */
-  virtual void touch(const Costmap3D& touch_map);
+  virtual void touch(const octomap::OcTree& touch_map);
 
   /** @brief Touch the given index.
    * This layer must be holding the lock to make this call. */
@@ -144,6 +144,10 @@ protected:
    * This layer must be holding the lock to make this call. */
   virtual void touchKeyAtDepth(const octomap::OcTreeKey& key,
                                unsigned int depth=std::numeric_limits<unsigned int>::max());
+
+  /** @brief Update the cells in binary fashion from the given values and bounds. */
+  virtual void updateCells(const octomap::OcTree& value_map, const octomap::OcTree& bounds_map,
+                           Cost occupied_threshold = LETHAL);
 
   /** @brief Update the cell at the given point.
    * If mark is true, mark the cell, otherwise clear it.
