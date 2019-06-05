@@ -61,7 +61,7 @@ target_link_libraries(costmap_3d
 )
 
 add_library(layers_3d
-#  plugins/octomap_server_layer.cpp
+  plugins/octomap_server_layer_3d.cpp
   plugins/costmap_3d_to_2d_layer.cpp
   plugins/costmap_3d_to_2d_layer_3d.cpp
 )
@@ -87,7 +87,7 @@ add_dependencies(layers_3d costmap_3d_gencfg)
 
 install(TARGETS
     costmap_3d
-#    layers_3d
+    layers_3d
     ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
     LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
 )
