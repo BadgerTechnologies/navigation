@@ -95,15 +95,6 @@ public:
    */
   virtual void updateCosts(const Costmap3D& bounds_map, Costmap3D* master_map);
 
-#if 0
-  virtual void initialize(LayeredCostmap3D* parent, std::string name, tf::TransformListener *tf)
-  {
-    super::initialize(parent, name, tf);
-    // Note that the master costmap's resolution is not set yet.
-    // Our setResolution method will be called later once it is set.
-  }
-#endif
-
   /** @brief Deactivate this layer.
    *
    * The default implementation will work fine if the layer is storing its
@@ -175,6 +166,14 @@ protected:
    * This layer must be holding the lock to make this call. */
   virtual void clearCell(const octomap::OcTreeKey& key);
 
+  /** @brief Mark and clear cells from the given Costmap3D.
+   *
+   * This copies the given Costmap3D into this layer, overwriting any
+   * overlapping cells with the costs in the passed in map.
+   *
+   * This layer must be holding the lock to make this call. */
+  virtual void markAndClearCells(const Costmap3D& map);
+
   /** @brief Erase the cell at the given point.
    * This layer must be holding the lock to make this call. */
   virtual void eraseCell(const geometry_msgs::Point& point);
@@ -182,6 +181,13 @@ protected:
   /** @brief Erase the cell at the given key.
    * This layer must be holding the lock to make this call. */
   virtual void eraseCell(const octomap::OcTreeKey& key);
+
+  /** @brief Erase the cells from this layer that exist in given map.
+   *
+   * Erase the cells in this costmap layer that exist in the passed in map.
+   *
+   * This layer must be holding the lock to make this call. */
+  virtual void eraseCells(const Costmap3D& map);
 
   /** @brief Set the cell cost at the given key and depth.
    * This layer must be holding the lock to make this call. */

@@ -50,6 +50,7 @@ namespace costmap_3d
  */
 class Costmap3DTo2DLayer3D : public Layer3D
 {
+  using super = Layer3D;
 public:
   Costmap3DTo2DLayer3D();
   virtual ~Costmap3DTo2DLayer3D();
@@ -61,6 +62,7 @@ public:
 
   virtual void updateCosts(const Costmap3D& bounds_map, Costmap3D* master_map) {}
 
+  virtual void initialize(LayeredCostmap3D* parent, std::string name, tf::TransformListener *tf);
   virtual void deactivate();
   virtual void activate();
   virtual void reset() {}

@@ -43,8 +43,10 @@ namespace costmap_3d
 
 Costmap3DROS::Costmap3DROS(std::string name, tf::TransformListener& tf) :
     super(name, tf),
+    initialized_(false),
     plugin_loader_("costmap_3d", "costmap_3d::Layer3D")
 {
+  std::lock_guard<std::mutex> initialize_lock(initialized_mutex_);
   ros::NodeHandle private_nh("~/" + name + "/");
 
   layered_costmap_3d_.reset(new LayeredCostmap3D(layered_costmap_));
@@ -73,6 +75,7 @@ Costmap3DROS::Costmap3DROS(std::string name, tf::TransformListener& tf) :
                                                                             std::placeholders::_1,
                                                                             std::placeholders::_2);
   dsrv_->setCallback(cb);
+  initialized_ = true;
 }
 
 Costmap3DROS::~Costmap3DROS()
@@ -113,7 +116,9 @@ void Costmap3DROS::reconfigureCB(Costmap3DConfig &config, uint32_t level)
 
 void Costmap3DROS::updateMap()
 {
-  if (!isPaused())
+  std::lock_guard<std::mutex> initialize_lock(initialized_mutex_);
+
+  if (initialized_ && !isPaused())
   {
     // First update the 3D map.
     // We update 3D first, in case any 3D layers need to affect 2D layers.

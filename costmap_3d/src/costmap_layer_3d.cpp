@@ -107,25 +107,19 @@ void CostmapLayer3D::initialize(LayeredCostmap3D* parent, std::string name, tf::
 void CostmapLayer3D::deactivate()
 {
   std::lock_guard<Layer3D> lock(*this);
-  if (enabled_)
-  {
-    enabled_ = false;
-    // Ensure the next costmap update will not have any information stored in
-    // this layer.
-    if (costmap_) touch(*costmap_);
-  }
+
+  // Ensure the next costmap update will not have any information stored in
+  // this layer.
+  if (costmap_) touch(*costmap_);
 }
 
 void CostmapLayer3D::activate()
 {
   std::lock_guard<Layer3D> lock(*this);
-  if (!enabled_)
-  {
-    enabled_ = true;
-    // Ensure the next costmap update will have any information stored in
-    // this layer.
-    if (costmap_) touch(*costmap_);
-  }
+
+  // Ensure the next costmap update will have any information stored in
+  // this layer.
+  if (costmap_) touch(*costmap_);
 }
 
 void CostmapLayer3D::reset()
@@ -155,18 +149,16 @@ void CostmapLayer3D::resetAABB(geometry_msgs::Point min_point, geometry_msgs::Po
   if (costmap_ && changed_cells_)
   {
     Costmap3DIndex min_key, max_key;
-    if (costmap_->coordToKeyChecked(toOctomapPoint(min_point), min_key) &&
-        costmap_->coordToKeyChecked(toOctomapPoint(max_point), max_key))
-    {
-      resetAABBUnlocked(min_key, max_key);
-    }
+    costmap_->coordToKeyClamped(toOctomapPoint(min_point), min_key);
+    costmap_->coordToKeyClamped(toOctomapPoint(max_point), max_key);
+    resetAABBUnlocked(min_key, max_key);
   }
 }
 
 void CostmapLayer3D::matchSize(const geometry_msgs::Point& min, const geometry_msgs::Point& max, double resolution)
 {
   std::lock_guard<Layer3D> lock(*this);
-  if (resolution != costmap_->getResolution())
+  if ((!costmap_ && resolution > 0.0) || (costmap_ && resolution != costmap_->getResolution()))
   {
     changed_cells_.reset(new Costmap3D(resolution));
     costmap_.reset(new Costmap3D(resolution));
@@ -257,6 +249,15 @@ void CostmapLayer3D::clearCell(const octomap::OcTreeKey& key)
   setCellCost(key, FREE);
 }
 
+void CostmapLayer3D::markAndClearCells(const Costmap3D& map)
+{
+  if (costmap_)
+  {
+    costmap_->setTreeValues(&map);
+    touch(map);
+  }
+}
+
 void CostmapLayer3D::eraseCell(const geometry_msgs::Point& point)
 {
   setCellCost(point, UNKNOWN);
@@ -267,13 +268,22 @@ void CostmapLayer3D::eraseCell(const octomap::OcTreeKey& key)
   setCellCost(key, UNKNOWN);
 }
 
+void CostmapLayer3D::eraseCells(const Costmap3D& map)
+{
+  if (costmap_)
+  {
+    costmap_->setTreeValues(NULL, &map, false, true);
+    touch(map);
+  }
+}
+
 void CostmapLayer3D::setCellCostAtDepth(const octomap::OcTreeKey& key, Cost cost, unsigned int depth)
 {
   if (costmap_)
   {
     if (cost >= FREE)
     {
-      costmap_->setNodeValueAtDepth(key, cost, depth);
+      costmap_->setNodeValueAtDepth(key, depth, cost);
     }
     else
     {

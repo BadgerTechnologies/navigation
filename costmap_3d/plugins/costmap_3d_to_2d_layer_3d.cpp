@@ -52,6 +52,12 @@ Costmap3DTo2DLayer3D::~Costmap3DTo2DLayer3D()
   deactivate();
 }
 
+void Costmap3DTo2DLayer3D::initialize(LayeredCostmap3D* parent, std::string name, tf::TransformListener *tf)
+{
+  super::initialize(parent, name, tf);
+  activate();
+}
+
 void Costmap3DTo2DLayer3D::activate()
 {
   // Find any costmap 3D to 2D layers and connect them to the 3D costmap

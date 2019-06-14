@@ -21,12 +21,14 @@
   <buildtool_depend>catkin</buildtool_depend>
 
   <depend>costmap_2d</depend>
+  <depend>tf_conversions</depend>
   <depend>dynamic_reconfigure</depend>
-  <depend>octomap_server</depend>
   <depend>pluginlib</depend>
   <depend>roscpp</depend>
   <depend>geometry_msgs</depend>
+  <!--
   <depend>moveit_core</depend>
+  -->
   <depend>octomap_msgs</depend>
 <!--
   <build_depend>laser_geometry</build_depend>
@@ -41,8 +43,8 @@
   <test_depend>map_server</test_depend>
   <test_depend>rosbag</test_depend>
 -->
-
   <export>
-    <costmap_3d plugin="${prefix}/costmap_plugins.xml"/>
+    <costmap_2d plugin="${prefix}/costmap_2d_plugins.xml"/>
+    <costmap_3d plugin="${prefix}/costmap_3d_plugins.xml"/>
   </export>
 </package>

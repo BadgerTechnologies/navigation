@@ -45,7 +45,7 @@ PLUGINLIB_EXPORT_CLASS(costmap_3d::OctomapServerLayer3D, costmap_3d::Layer3D)
 namespace costmap_3d
 {
 
-OctomapServerLayer3D::OctomapServerLayer3D() : super()
+OctomapServerLayer3D::OctomapServerLayer3D() : super(), using_updates_(false)
 {
 }
 
@@ -76,15 +76,17 @@ void OctomapServerLayer3D::initialize(LayeredCostmap3D* parent, std::string name
   map_topic_ = pnh_.param("map_topic", topic_prefix + "octomap_binary");
   map_update_topic_ = pnh_.param("map_update_topic", map_topic_ + "_updates");
 
-  ROS_INFO_STREAM("OctomapServerLayer3D " << name << ": Initialized with " <<
-                  "map_topic: " << map_topic_ <<
-                  "map_update_topic: " << map_update_topic_ <<
-                  "reset_srv_name: " << reset_srv_name_ <<
-                  "erase_bbx_srv_name: " << erase_bbx_srv_name_);
+  ROS_INFO_STREAM("OctomapServerLayer3D " << name << ": initializing");
+  ROS_INFO_STREAM("  map_topic: " << map_topic_);
+  ROS_INFO_STREAM("  map_update_topic: " << map_update_topic_);
+  ROS_INFO_STREAM("  reset_srv_name: " << reset_srv_name_);
+  ROS_INFO_STREAM("  erase_bbx_srv_name: " << erase_bbx_srv_name_);
 
   dsrv_.reset(new dynamic_reconfigure::Server<costmap_3d::GenericPluginConfig>(pnh_));
   dsrv_->setCallback(std::bind(&OctomapServerLayer3D::reconfigureCallback, this,
                                std::placeholders::_1, std::placeholders::_2));
+
+  activate();
 }
 
 void OctomapServerLayer3D::reconfigureCallback(costmap_3d::GenericPluginConfig &config, uint32_t level)
@@ -98,19 +100,14 @@ void OctomapServerLayer3D::deactivate()
 {
   super::deactivate();
   // Unsubscribe from everything.
-  map_sub_.shutdown();
-  map_update_sub_.shutdown();
+  unsubscribe();
+  std::lock_guard<Layer3D> lock(*this);
   reset_srv_.shutdown();
   erase_bbx_srv_.shutdown();
 }
 
 void OctomapServerLayer3D::activate()
 {
-  map_sub_ = pnh_.subscribe<octomap_msgs::Octomap>(map_topic_, 10, std::bind(&OctomapServerLayer3D::mapCallback,
-                                                                             this, std::placeholders::_1));
-  map_update_sub_ = pnh_.subscribe<octomap_msgs::OctomapUpdate>(map_update_topic_, 10,
-                                                                std::bind(&OctomapServerLayer3D::mapUpdateCallback,
-                                                                          this, std::placeholders::_1));
   reset_srv_ = pnh_.serviceClient<std_srvs::Empty>(reset_srv_name_);
   erase_bbx_srv_ = pnh_.serviceClient<octomap_msgs::BoundingBoxQuery>(erase_bbx_srv_name_);
 
@@ -126,6 +123,26 @@ void OctomapServerLayer3D::activate()
   }
 
   super::activate();
+
+  subscribe();
+}
+
+void OctomapServerLayer3D::subscribe()
+{
+  std::lock_guard<Layer3D> lock(*this);
+  map_sub_ = pnh_.subscribe<octomap_msgs::Octomap>(map_topic_, 1, std::bind(&OctomapServerLayer3D::mapCallback,
+                                                                            this, std::placeholders::_1));
+  map_update_sub_ = pnh_.subscribe<octomap_msgs::OctomapUpdate>(map_update_topic_, 10,
+                                                                std::bind(&OctomapServerLayer3D::mapUpdateCallback,
+                                                                          this, std::placeholders::_1));
+}
+
+void OctomapServerLayer3D::unsubscribe()
+{
+  std::lock_guard<Layer3D> lock(*this);
+  map_sub_.shutdown();
+  map_update_sub_.shutdown();
+  using_updates_ = false;
 }
 
 void OctomapServerLayer3D::reset()
@@ -165,13 +182,12 @@ void OctomapServerLayer3D::resetAABBUnlocked(Costmap3DIndex min, Costmap3DIndex 
 
 void OctomapServerLayer3D::matchSize(const geometry_msgs::Point& min, const geometry_msgs::Point& max, double resolution)
 {
-  if (resolution != costmap_->getResolution())
+  if (!costmap_ || resolution != costmap_->getResolution())
   {
-    // Resolution changed, need to request full message.
-    // Do this by re-subscribing to the map topic.
-    map_sub_.shutdown();
-    map_sub_ = pnh_.subscribe<octomap_msgs::Octomap>(map_topic_, 10, std::bind(&OctomapServerLayer3D::mapCallback,
-                                                                               this, std::placeholders::_1));
+    // Resolution will change, need to request full message.
+    // Do this by re-subscribing to the map topics.
+    unsubscribe();
+    subscribe();
   }
   super::matchSize(min, max, resolution);
 
@@ -181,17 +197,33 @@ void OctomapServerLayer3D::matchSize(const geometry_msgs::Point& min, const geom
 
 void OctomapServerLayer3D::mapCallback(const octomap_msgs::OctomapConstPtr& map_msg)
 {
-  mapUpdateInternal(map_msg.get(), nullptr);
+  std::lock_guard<Layer3D> lock(*this);
+  if (!using_updates_)
+    mapUpdateInternal(map_msg.get(), nullptr);
 }
 
 void OctomapServerLayer3D::mapUpdateCallback(const octomap_msgs::OctomapUpdateConstPtr& map_update_msg)
 {
+  std::lock_guard<Layer3D> lock(*this);
+  if (!using_updates_)
+  {
+    using_updates_ = true;
+    // now that we are using updates, there is no need for the map sub
+    map_sub_.shutdown();
+  }
   mapUpdateInternal(&map_update_msg->octomap_update, &map_update_msg->octomap_bounds);
 }
 
 void OctomapServerLayer3D::mapUpdateInternal(const octomap_msgs::Octomap* map_msg,
                                              const octomap_msgs::Octomap* bounds_msg)
 {
+  if (!changed_cells_ || !costmap_)
+  {
+    // No costmap to update yet
+    ROS_WARN_STREAM_THROTTLE(1.0, "OctomapServerLayer3D " << name_ << ": received non-binary map, ignoring");
+    return;
+  }
+
   // Verify binary, resolution and frame match.
   if (!map_msg->binary)
   {
@@ -201,13 +233,13 @@ void OctomapServerLayer3D::mapUpdateInternal(const octomap_msgs::Octomap* map_ms
   {
     ROS_WARN_STREAM_THROTTLE(1.0, "OctomapServerLayer3D " << name_ << ": received non-binary bounds map, ignoring");
   }
-  else if(costmap_ && std::abs(map_msg->resolution - costmap_->getResolution()) > 1e-6)
+  else if(std::abs(map_msg->resolution - costmap_->getResolution()) > 1e-6)
   {
     ROS_WARN_STREAM_THROTTLE(1.0, "OctomapServerLayer3D " << name_ << ": received map with resolution " <<
                              map_msg->resolution << " but costmap resolution is " <<
                              costmap_->getResolution() << ", ignoring");
   }
-  else if(costmap_ && bounds_msg != nullptr && std::abs(bounds_msg->resolution - costmap_->getResolution()) > 1e-6)
+  else if(bounds_msg != nullptr && std::abs(bounds_msg->resolution - costmap_->getResolution()) > 1e-6)
   {
     ROS_WARN_STREAM_THROTTLE(1.0, "OctomapServerLayer3D " << name_ << ": received bounds map with resolution " <<
                              map_msg->resolution << " but costmap resolution is " <<
@@ -225,7 +257,7 @@ void OctomapServerLayer3D::mapUpdateInternal(const octomap_msgs::Octomap* map_ms
                              bounds_msg->header.frame_id << " but global frame is " <<
                              layered_costmap_3d_->getGlobalFrameID() << ", ignoring");
   }
-  else if(costmap_)
+  else
   {
     std::shared_ptr<octomap::AbstractOcTree> abstract_map(octomap_msgs::binaryMsgToMap(*map_msg));
     octomap::OcTree* map = dynamic_cast<octomap::OcTree*>(abstract_map.get());
@@ -235,6 +267,7 @@ void OctomapServerLayer3D::mapUpdateInternal(const octomap_msgs::Octomap* map_ms
     }
     else
     {
+      ROS_INFO_STREAM("received value octomap with size " << map->size());
       std::shared_ptr<octomap::AbstractOcTree> abstract_bounds_map;
       if (bounds_msg != nullptr)
       {
@@ -254,8 +287,11 @@ void OctomapServerLayer3D::mapUpdateInternal(const octomap_msgs::Octomap* map_ms
       }
       else
       {
+        ROS_INFO_STREAM("using bounds octomap with size " << bounds_map->size());
         // Use zero log odds as the threshold for any incoming binary map
         updateCells(*map, *bounds_map, 0.0);
+        ROS_INFO_STREAM("after update cells, costmap_ has size " << costmap_->size());
+        ROS_INFO_STREAM(" and changed_cells_ has size " << changed_cells_->size());
       }
     }
   }

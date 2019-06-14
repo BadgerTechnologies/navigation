@@ -40,10 +40,10 @@ namespace costmap_3d
 {
 
 LayeredCostmap3D::LayeredCostmap3D(costmap_2d::LayeredCostmap* layered_costmap_2d)
-    : layered_costmap_2d_(layered_costmap_2d),
-      lock_layers_(this),
-      resolution_(0.0),
-      size_changed_(false)
+    : lock_layers_(this),
+      layered_costmap_2d_(layered_costmap_2d),
+      size_changed_(false),
+      resolution_(0.0)
 {
   min_point_.x = -std::numeric_limits<double>::max();
   min_point_.y = -std::numeric_limits<double>::max();
@@ -62,7 +62,7 @@ void LayeredCostmap3D::updateMap(geometry_msgs::Pose robot_pose)
   setResolution();
 
   // Lock the master costmap
-  std::lock_guard<LayeredCostmap3D>(*this);
+  std::lock_guard<LayeredCostmap3D> lock(*this);
 
   if (!costmap_)
   {
@@ -93,18 +93,19 @@ void LayeredCostmap3D::updateMap(geometry_msgs::Pose robot_pose)
   {
     // Adjust the x/y based on the x/y of the robot's pose, as a rolling map
     // stays centered on the robot base in x/y (but not z).
-    double robot_x = robot_pose.position.x;
-    double robot_y = robot_pose.position.y;
-    double aabb_width = aabb_max.x() - aabb_min.x();
-    double aabb_height = aabb_max.y() - aabb_min.y();
-    aabb_min.x() += robot_x - aabb_width/2.0;
-    aabb_min.y() += robot_y - aabb_height/2.0;
-    aabb_max.x() += robot_x - aabb_width/2.0;
-    aabb_max.y() += robot_y - aabb_height/2.0;
+    float robot_x = (float)robot_pose.position.x;
+    float robot_y = (float)robot_pose.position.y;
+    float aabb_width = aabb_max.x() - aabb_min.x();
+    float aabb_height = aabb_max.y() - aabb_min.y();
+    aabb_min.x() += robot_x - aabb_width/2.0f;
+    aabb_min.y() += robot_y - aabb_height/2.0f;
+    aabb_max.x() += robot_x - aabb_width/2.0f;
+    aabb_max.y() += robot_y - aabb_height/2.0f;
   }
   const geometry_msgs::Point min_msg(fromOctomapPoint(aabb_min));
   const geometry_msgs::Point max_msg(fromOctomapPoint(aabb_max));
 
+  ROS_INFO_STREAM("LayeredCostmap3D: updateMap: min point " << min_msg << " max point " << max_msg);
   // Go ahead and delete any out-of-bounds information from our costmap.
   // Save any cells that are deleted to use when publishing the update.
   costmap_->deleteAABB(aabb_min, aabb_max, true,
@@ -113,6 +114,7 @@ void LayeredCostmap3D::updateMap(geometry_msgs::Pose robot_pose)
                                  &deleted_map,
                                  std::placeholders::_3,
                                  std::placeholders::_4));
+
 
   {
     // lock all the costmap layers
@@ -273,6 +275,7 @@ void LayeredCostmap3D::setBounds(const geometry_msgs::Point& min, const geometry
       max.y != max_point_.y ||
       max.z != max_point_.z)
   {
+    ROS_INFO_STREAM("LayeredCostmap3D: min point " << min << " max point " << max);
     min_point_ = min;
     max_point_ = max;
     sizeChange();

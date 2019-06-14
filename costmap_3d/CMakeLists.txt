@@ -6,11 +6,11 @@ set(CMAKE_CXX_STANDARD 11)
 find_package(catkin REQUIRED COMPONENTS
   costmap_2d
   dynamic_reconfigure
-  octomap_server
+#  octomap_server
   pluginlib
   roscpp
   geometry_msgs
-  moveit_core
+#  moveit_core
   octomap_msgs
 )
 
@@ -36,11 +36,11 @@ catkin_package(
   CATKIN_DEPENDS
     costmap_2d
     dynamic_reconfigure
-    octomap_server
+#    octomap_server
     pluginlib
     roscpp
     geometry_msgs
-    moveit_core
+#    moveit_core
     octomap_msgs
   DEPENDS
     OCTOMAP
@@ -92,7 +92,9 @@ install(TARGETS
     LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
 )
 
-install(FILES costmap_plugins.xml
+install(FILES
+  costmap_2d_plugins.xml
+  costmap_3d_plugins.xml
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )
 

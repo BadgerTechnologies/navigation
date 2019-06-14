@@ -1,6 +1,7 @@
 global_frame: odom
 robot_base_frame: base_footprint
 rolling_window: true
+track_unknown_space: true
 always_send_full_costmap: false
 
 publish_frequency: 5.0
@@ -20,8 +21,10 @@ footprint_padding: 0.01
 costmap_3d:
   plugins:
   - {name: costmap_3d_to_2d, type: 'costmap_3d::Costmap3DTo2DLayer3D'}
-  - {name: octomap_server, type: 'costmap_3d::OctomapServerLayer3D'}
-  octomap_server:
+  - {name: occupancy_octomap_layer, type: 'costmap_3d::OctomapServerLayer3D'}
+  occupancy_octomap_layer:
+    octomap_server_namespace: '/'
+    octomap_server_node_name: occupancy_octomap
     enabled: true
     combination_method: 1
 

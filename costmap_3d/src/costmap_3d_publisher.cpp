@@ -35,8 +35,6 @@
  * Author: C. Andy Martin
  *********************************************************************/
 #include <costmap_3d/costmap_3d_publisher.h>
-#include <octomap_msgs/Octomap.h>
-#include <octomap_msgs/OctomapUpdate.h>
 #include <octomap_msgs/conversions.h>
 
 namespace costmap_3d
@@ -45,12 +43,12 @@ namespace costmap_3d
 Costmap3DPublisher::Costmap3DPublisher(const ros::NodeHandle& nh,
                                        LayeredCostmap3D* layered_costmap_3d,
                                        std::string topic_name)
-    : nh_(nh), layered_costmap_3d_(layered_costmap_3d), send_full_map_(true)
+    : nh_(nh), layered_costmap_3d_(layered_costmap_3d)
 {
-  costmap_pub_ = nh_.advertise<octomap_msgs::Octomap>(topic_name, 1,
+  costmap_pub_ = nh_.advertise<octomap_msgs::Octomap>(topic_name, 1);
+  costmap_update_pub_ = nh_.advertise<octomap_msgs::OctomapUpdate>(topic_name + "_updates", 1,
                                                       std::bind(&Costmap3DPublisher::connectCallback, this,
                                                                 std::placeholders::_1));
-  costmap_update_pub_ = nh_.advertise<octomap_msgs::OctomapUpdate>(topic_name + "_updates", 1);
 
   update_complete_id = topic_name + "_publisher";
   layered_costmap_3d_->registerUpdateCompleteCallback(update_complete_id,
@@ -67,15 +65,17 @@ Costmap3DPublisher::~Costmap3DPublisher()
 
 void Costmap3DPublisher::connectCallback(const ros::SingleSubscriberPublisher& pub)
 {
-  octomap_msgs::Octomap msg;
-  msg.header.stamp = ros::Time::now();
-  msg.header.frame_id = layered_costmap_3d_->getGlobalFrameID();
+  Costmap3D universe(layered_costmap_3d_->getResolution());
+  universe.setNodeValueAtDepth(Costmap3DIndex(), 0, LETHAL);
+  octomap_msgs::OctomapUpdatePtr msg_ptr;
   {
     // Be sure to lock the costmap while using it
     std::lock_guard<LayeredCostmap3D> costmap_lock(*layered_costmap_3d_);
-    octomap_msgs::fullMapToMsg(*layered_costmap_3d_->getCostmap3D(), msg);
+    // Send an "update" message with universal bounds and the entire costmap.
+    // This way, a new subscriber starts with the correct map state.
+    msg_ptr = createMapUpdateMessage(*layered_costmap_3d_->getCostmap3D(), universe);
   }
-  pub.publish(msg);
+  pub.publish(msg_ptr);
 }
 
 void Costmap3DPublisher::updateCompleteCallback(LayeredCostmap3D* layered_costmap_3d,
@@ -84,20 +84,46 @@ void Costmap3DPublisher::updateCompleteCallback(LayeredCostmap3D* layered_costma
 {
   // The layered costmap already holds the lock when calling the update
   // complete, no need to lock
+  if (costmap_pub_.getNumSubscribers() > 0)
+  {
+    octomap_msgs::OctomapPtr msg_ptr(createMapMessage(*layered_costmap_3d_->getCostmap3D()));
+    costmap_pub_.publish(msg_ptr);
+  }
+  if (costmap_update_pub_.getNumSubscribers() > 0)
+  {
+    octomap_msgs::OctomapUpdatePtr msg_ptr(createMapUpdateMessage(delta_map, bounds_map));
+    costmap_update_pub_.publish(msg_ptr);
+  }
+}
+
+octomap_msgs::OctomapPtr Costmap3DPublisher::createMapMessage(const Costmap3D& map)
+{
   ros::Time stamp = ros::Time::now();
   std::string frame = layered_costmap_3d_->getGlobalFrameID();
-  octomap_msgs::OctomapUpdate msg;
-  msg.header.frame_id = frame;
-  msg.header.stamp = stamp;
-  msg.octomap_update.header.frame_id = frame;
-  msg.octomap_update.header.stamp = stamp;
-  msg.octomap_bounds.header.frame_id = frame;
-  msg.octomap_bounds.header.stamp = stamp;
+  octomap_msgs::OctomapPtr msg_ptr(new octomap_msgs::Octomap);
+  msg_ptr->header.frame_id = frame;
+  msg_ptr->header.stamp = stamp;
+  octomap_msgs::fullMapToMsg(map, *msg_ptr);
+  return msg_ptr;
+}
+
+octomap_msgs::OctomapUpdatePtr Costmap3DPublisher::createMapUpdateMessage(const Costmap3D& value_map,
+                                                                          const Costmap3D& bounds_map)
+{
+  ros::Time stamp = ros::Time::now();
+  std::string frame = layered_costmap_3d_->getGlobalFrameID();
+  octomap_msgs::OctomapUpdatePtr msg_ptr(new octomap_msgs::OctomapUpdate);
+  msg_ptr->header.frame_id = frame;
+  msg_ptr->header.stamp = stamp;
+  msg_ptr->octomap_update.header.frame_id = frame;
+  msg_ptr->octomap_update.header.stamp = stamp;
+  msg_ptr->octomap_bounds.header.frame_id = frame;
+  msg_ptr->octomap_bounds.header.stamp = stamp;
   // always send costs along with map
-  octomap_msgs::fullMapToMsg(delta_map, msg.octomap_update);
+  octomap_msgs::fullMapToMsg(value_map, msg_ptr->octomap_update);
   // bounds map is only ever binary
-  octomap_msgs::binaryMapToMsg(bounds_map, msg.octomap_bounds);
-  costmap_update_pub_.publish(msg);
+  octomap_msgs::binaryMapToMsg(bounds_map, msg_ptr->octomap_bounds);
+  return msg_ptr;
 }
 
 }  // end namespace costmap_2d

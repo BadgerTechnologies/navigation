@@ -60,6 +60,8 @@ class Layer3D;
 class LayeredCostmap3D
 {
 public:
+  LayeredCostmap3D(const LayeredCostmap3D&) = delete;
+  LayeredCostmap3D& operator=(const LayeredCostmap3D&) = delete;
   /**
    * @brief Constructor for a 3D layered costmap
    */

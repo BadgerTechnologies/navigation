@@ -47,7 +47,7 @@ Costmap3D::Costmap3D(double resolution) : octomap::OcTree(resolution)
   setClampingThresMin(octomap::probability(FREE));
   setClampingThresMax(octomap::probability(LETHAL));
   // By default, only lethal cells are considered occupied
-  setOccupancyThres(LETHAL);
+  setOccupancyThres(octomap::probability(LETHAL));
   // TODO: FCL has an OcTree wrapper class that defines both a free threshold
   // and an occupied threshold.
   // It copies the lethal threshold, but defaults to a 0 probability for the
@@ -62,7 +62,7 @@ Costmap3D::Costmap3D(double resolution) : octomap::OcTree(resolution)
 
 octomap::point3d toOctomapPoint(const geometry_msgs::Point& point)
 {
-  return octomap::point3d(point.x, point.y, point.z);
+  return octomap::point3d((float)point.x, (float)point.y, (float)point.z);
 }
 
 geometry_msgs::Point fromOctomapPoint(const octomap::point3d& point)

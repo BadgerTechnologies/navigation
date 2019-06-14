@@ -35,13 +35,62 @@
  * Author: C. Andy Martin
  *********************************************************************/
 #include <ros/ros.h>
+#include <std_srvs/Empty.h>
+#include <std_srvs/Empty.h>
+#include <octomap_msgs/BoundingBoxQuery.h>
 #include <costmap_3d/costmap_3d_ros.h>
+
+costmap_3d::Costmap3DROS* g_costmap_ptr;
+
+bool stopService(std_srvs::EmptyRequest& req, std_srvs::EmptyResponse& resp)
+{
+  if (g_costmap_ptr)
+  {
+    g_costmap_ptr->stop();
+  }
+  return true;
+}
+
+bool startService(std_srvs::EmptyRequest& req, std_srvs::EmptyResponse& resp)
+{
+  if (g_costmap_ptr)
+  {
+    g_costmap_ptr->start();
+  }
+  return true;
+}
+
+bool resetService(std_srvs::EmptyRequest& req, std_srvs::EmptyResponse& resp)
+{
+  if (g_costmap_ptr)
+  {
+    g_costmap_ptr->resetLayers();
+  }
+  return true;
+}
+
+bool eraseBBoxService(octomap_msgs::BoundingBoxQueryRequest& req, octomap_msgs::BoundingBoxQueryResponse& resp)
+{
+  if (g_costmap_ptr)
+  {
+    g_costmap_ptr->clearAABB(req.min, req.max);
+  }
+  return true;
+}
+
 
 int main(int argc, char* argv[])
 {
   ros::init(argc, argv, "costmap_3d_node");
+  ros::NodeHandle pnh("~");
   tf::TransformListener tf(ros::Duration(10));
-  costmap_3d::Costmap3DROS costmap("costmap_3d_node", tf);
+  costmap_3d::Costmap3DROS costmap("costmap", tf);
+  g_costmap_ptr = &costmap;
+
+  auto reset_srv = pnh.advertiseService("reset", resetService);
+  auto stop_srv = pnh.advertiseService("stop", stopService);
+  auto start_srv = pnh.advertiseService("start", startService);
+  auto erase_bbx_srv = pnh.advertiseService("erase_bbx", eraseBBoxService);
 
   ros::spin();
 

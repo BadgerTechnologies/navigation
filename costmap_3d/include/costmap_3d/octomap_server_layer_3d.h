@@ -81,6 +81,9 @@ protected:
 
   virtual void reconfigureCallback(costmap_3d::GenericPluginConfig &config, uint32_t level);
 
+  virtual void subscribe();
+  virtual void unsubscribe();
+
   ros::NodeHandle pnh_;
   std::shared_ptr<dynamic_reconfigure::Server<costmap_3d::GenericPluginConfig>> dsrv_;
   std::string map_topic_;
@@ -91,6 +94,7 @@ protected:
   ros::ServiceClient erase_bbx_srv_;
   ros::Subscriber map_sub_;
   ros::Subscriber map_update_sub_;
+  bool using_updates_;
 };
 
 }  // namespace costmap_3d

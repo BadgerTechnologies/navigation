@@ -98,6 +98,7 @@ void Costmap3DTo2DLayer::matchSize()
 {
   copy_full_map_ = true;
   super::matchSize();
+  addExtraBounds(getOriginX(), getOriginY(), getSizeInMetersX(), getSizeInMetersY());
 }
 
 void Costmap3DTo2DLayer::activate()
@@ -113,7 +114,9 @@ void Costmap3DTo2DLayer::reset()
 {
   super::resetMaps();
   current_ = false;
+  layered_costmap_3d_ = NULL;
   copy_full_map_ = true;
+  addExtraBounds(getOriginX(), getOriginY(), getSizeInMetersX(), getSizeInMetersY());
 }
 
 void Costmap3DTo2DLayer::updateBounds(double robot_x, double robot_y, double robot_yaw, double* min_x, double* min_y,
@@ -131,14 +134,23 @@ void Costmap3DTo2DLayer::updateBounds(double robot_x, double robot_y, double rob
       addExtraBounds(getOriginX(), getOriginY(), getSizeInMetersX(), getSizeInMetersY());
     }
   }
-  if (enabled_)
+  if (enabled_ && layered_costmap_3d_)
   {
+    int min_map_x, min_map_y;
+    int max_map_x, max_map_y;
     {
       // First erase the bounding-box of the 2D map.
-      int min_map_x, min_map_y;
-      int max_map_x, max_map_y;
       worldToMapEnforceBounds(extra_min_x_, extra_min_y_, min_map_x, min_map_y);
       worldToMapEnforceBounds(extra_max_x_, extra_max_y_, max_map_x, max_map_y);
+      assert(min_map_x >= 0);
+      assert(min_map_x < (signed)size_x_);
+      assert(min_map_y >= 0);
+      assert(min_map_y < (signed)size_y_);
+      assert(max_map_x >= 0);
+      assert(max_map_x < (signed)size_x_);
+      assert(max_map_y >= 0);
+      assert(max_map_y < (signed)size_y_);
+      for (int row = min_map_y; row <= max_map_y; ++row)
       for (int row = min_map_y; row <= max_map_y; ++row)
       {
         const int row_len = (max_map_x - min_map_x) + 1;
@@ -160,18 +172,38 @@ void Costmap3DTo2DLayer::updateBounds(double robot_x, double robot_y, double rob
       auto it = master_3d->begin_leafs_bbx(min_index, max_index);
       auto end = master_3d->end_leafs_bbx();
 
+      assert(resolution_ > 0.0);
+      assert((master_3d->getResolution() - resolution_) < 1e-6);
+      const int map_ox = (int)std::round(origin_x_ / resolution_);
+      const int map_oy = (int)std::round(origin_y_ / resolution_);
+      const int map_3d_ox = (1 << (master_3d->getTreeDepth() - 1));
+      const int map_3d_oy = (1 << (master_3d->getTreeDepth() - 1));
+
       while (it != end)
       {
-        double x = it.getX();
-        double y = it.getY();
-        unsigned int map_row, map_col;
-        if (worldToMap(x, y, map_row, map_col))
+        Costmap3DIndex min_index_3d = it.getIndexKey();
+        const int min_x_3d = (int)min_index_3d[0] - map_3d_ox;
+        const int min_y_3d = (int)min_index_3d[1] - map_3d_oy;
+        const octomap::key_type depth_diff_3d = master_3d->getTreeDepth() - it.getDepth();
+        const octomap::key_type size_3d = (((octomap::key_type)1u)<<depth_diff_3d) - 1u;
+        const int max_x_3d = min_x_3d + size_3d;
+        const int max_y_3d = min_y_3d + size_3d;
+        const unsigned char cost = toCostmap2D(it->getValue());
+
+        for (int y = min_y_3d; y <= max_y_3d; ++y)
         {
-          const unsigned int map_index = getIndex(map_row, map_col);
-          const unsigned char cost = toCostmap2D(it->getValue());
-          if (costmap_[map_index] == costmap_2d::NO_INFORMATION || cost > costmap_[map_index])
+          for (int x = min_x_3d; x <= max_x_3d; ++x)
           {
-            costmap_[map_index] = cost;
+            const int map_x = x - map_ox;
+            const int map_y = y - map_oy;
+            if (map_x >= min_map_x && map_y >= min_map_y && map_x <= max_map_x && map_y <= max_map_y)
+            {
+              const unsigned int map_index = getIndex(map_x, map_y);
+              if (costmap_[map_index] == costmap_2d::NO_INFORMATION || cost > costmap_[map_index])
+              {
+                costmap_[map_index] = cost;
+              }
+            }
           }
         }
         ++it;

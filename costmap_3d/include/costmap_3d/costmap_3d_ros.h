@@ -146,12 +146,17 @@ protected:
   std::shared_ptr<LayeredCostmap3D> layered_costmap_3d_;
 
 private:
+  // Because the parent class starts a thread calling updateMap right away,
+  // keep track if we are fully initialized to prevent doing anything with a
+  // partially constructed object.
+  std::mutex initialized_mutex_;
+  bool initialized_;
   void reconfigureCB(costmap_3d::Costmap3DConfig &config, uint32_t level);
   pluginlib::ClassLoader<Layer3D> plugin_loader_;
   std::shared_ptr<Costmap3DPublisher> publisher_;
   std::shared_ptr<dynamic_reconfigure::Server<costmap_3d::Costmap3DConfig>> dsrv_;
 
-  float footprint_3d_padding_;
+  double footprint_3d_padding_;
 };
 // class Costmap3DROS
 }  // namespace costmap_3d
