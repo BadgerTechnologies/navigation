@@ -144,7 +144,7 @@ void LayeredCostmap3D::updateMap(geometry_msgs::Pose robot_pose)
   // out-of-bounds.
   bounds_map.setTreeValues(&deleted_map);
   Costmap3D map_delta(costmap_->getResolution());
-  map_delta.setTreeValues(costmap_.get(), &bounds_map);
+  map_delta.setTreeValues(costmap_.get(), &bounds_map, false, false);
 
   for (auto cb : update_complete_callbacks_)
   {
