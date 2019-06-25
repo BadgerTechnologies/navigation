@@ -92,6 +92,10 @@ void OctomapServerLayer3D::initialize(LayeredCostmap3D* parent, std::string name
 void OctomapServerLayer3D::reconfigureCallback(costmap_3d::GenericPluginConfig &config, uint32_t level)
 {
   std::lock_guard<Layer3D> lock(*this);
+  if ((enabled_ && !config.enabled) || (!enabled_ && config.enabled))
+  {
+    if (costmap_) touch(*costmap_);
+  }
   enabled_ = config.enabled;
   combination_method_ = config.combination_method;
 }

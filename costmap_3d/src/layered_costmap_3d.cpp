@@ -171,6 +171,8 @@ void LayeredCostmap3D::unregisterUpdateCompleteCallback(const std::string callba
 void LayeredCostmap3D::reset()
 {
   std::lock_guard<LayeredCostmap3D> lock(*this);
+  // Force a full publish on the next cycle
+  size_changed_ = true;
   costmap_->clear();
 
   for (auto plugin : plugins_)
