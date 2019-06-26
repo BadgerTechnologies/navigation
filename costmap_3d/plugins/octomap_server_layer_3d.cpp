@@ -271,7 +271,7 @@ void OctomapServerLayer3D::mapUpdateInternal(const octomap_msgs::Octomap* map_ms
     }
     else
     {
-      ROS_INFO_STREAM("received value octomap with size " << map->size());
+      ROS_DEBUG_STREAM("received value octomap with size " << map->size());
       std::shared_ptr<octomap::AbstractOcTree> abstract_bounds_map;
       if (bounds_msg != nullptr)
       {
@@ -291,11 +291,11 @@ void OctomapServerLayer3D::mapUpdateInternal(const octomap_msgs::Octomap* map_ms
       }
       else
       {
-        ROS_INFO_STREAM("using bounds octomap with size " << bounds_map->size());
+        ROS_DEBUG_STREAM("using bounds octomap with size " << bounds_map->size());
         // Use zero log odds as the threshold for any incoming binary map
         updateCells(*map, *bounds_map, 0.0);
-        ROS_INFO_STREAM("after update cells, costmap_ has size " << costmap_->size());
-        ROS_INFO_STREAM(" and changed_cells_ has size " << changed_cells_->size());
+        ROS_DEBUG_STREAM("after update cells, costmap_ has size " << costmap_->size());
+        ROS_DEBUG_STREAM(" and changed_cells_ has size " << changed_cells_->size());
       }
     }
   }

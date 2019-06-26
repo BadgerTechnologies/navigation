@@ -105,7 +105,7 @@ void LayeredCostmap3D::updateMap(geometry_msgs::Pose robot_pose)
   const geometry_msgs::Point min_msg(fromOctomapPoint(aabb_min));
   const geometry_msgs::Point max_msg(fromOctomapPoint(aabb_max));
 
-  ROS_INFO_STREAM("LayeredCostmap3D: updateMap: min point " << min_msg << " max point " << max_msg);
+  ROS_DEBUG_STREAM("LayeredCostmap3D: updateMap: min point " << min_msg << " max point " << max_msg);
   // Go ahead and delete any out-of-bounds information from our costmap.
   // Save any cells that are deleted to use when publishing the update.
   costmap_->deleteAABB(aabb_min, aabb_max, true,
@@ -277,7 +277,7 @@ void LayeredCostmap3D::setBounds(const geometry_msgs::Point& min, const geometry
       max.y != max_point_.y ||
       max.z != max_point_.z)
   {
-    ROS_INFO_STREAM("LayeredCostmap3D: min point " << min << " max point " << max);
+    ROS_DEBUG_STREAM("LayeredCostmap3D: min point " << min << " max point " << max);
     min_point_ = min;
     max_point_ = max;
     sizeChange();
