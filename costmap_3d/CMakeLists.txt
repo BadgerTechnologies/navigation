@@ -6,31 +6,55 @@ set(CMAKE_CXX_STANDARD 11)
 find_package(catkin REQUIRED COMPONENTS
   costmap_2d
   dynamic_reconfigure
-#  octomap_server
+  actionlib_msgs
   pluginlib
   roscpp
   geometry_msgs
-#  moveit_core
   octomap_msgs
   pcl_ros
   pcl_msgs
   pcl_conversions
   tf_conversions
+  message_generation
 )
 
 find_package(OCTOMAP REQUIRED)
 find_package(PCL 1.7 REQUIRED)
 
+# Find FCL (flexible collision library)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBFCL_PC REQUIRED fcl)
+# find *absolute* paths to LIBFCL_INCLUDE_DIRS and LIBFCL_LIBRARIES
+find_path(LIBFCL_INCLUDE_DIRS fcl/config.h HINTS ${LIBFCL_PC_INCLUDE_DIR} ${LIBFCL_PC_INCLUDE_DIRS})
+find_library(LIBFCL_LIBRARIES fcl HINTS ${LIBFCL_PC_LIBRARY_DIRS})
+
 include_directories(
   include
   ${OCTOMAP_INCLUDE_DIRS}
   ${PCL_INCLUDE_DIRS}
+  ${LIBFCL_INCLUDE_DIRS}
   ${catkin_INCLUDE_DIRS}
 )
 
 generate_dynamic_reconfigure_options(
   cfg/Costmap3D.cfg
   cfg/GenericPlugin.cfg
+)
+
+add_action_files(
+  FILES
+  GetPlanCost3D.action
+)
+
+add_service_files(
+  FILES
+  GetPlanCost3DService.srv
+)
+
+generate_messages(
+  DEPENDENCIES
+  actionlib_msgs
+  geometry_msgs
 )
 
 catkin_package(
@@ -42,11 +66,9 @@ catkin_package(
   CATKIN_DEPENDS
     costmap_2d
     dynamic_reconfigure
-#    octomap_server
     pluginlib
     roscpp
     geometry_msgs
-#    moveit_core
     octomap_msgs
     pcl_ros
     pcl_msgs
@@ -55,6 +77,7 @@ catkin_package(
   DEPENDS
     OCTOMAP
     PCL
+    LIBFCL
 )
 
 add_library(costmap_3d
@@ -68,6 +91,8 @@ add_library(costmap_3d
 
 target_link_libraries(costmap_3d
   ${OCTOMAP_LIBRARIES}
+  ${PCL_LIBRARIES}
+  ${LIBFCL_LIBRARIES}
   ${catkin_LIBRARIES}
 )
 target_compile_options(costmap_3d PRIVATE ${EXTRA_COMPILE_OPTIONS})
@@ -81,12 +106,11 @@ add_library(layers_3d
 
 target_link_libraries(layers_3d
   costmap_3d
-  ${PCL_LIBRARIES}
 )
 target_compile_options(layers_3d PRIVATE ${EXTRA_COMPILE_OPTIONS})
 
-add_dependencies(costmap_3d costmap_3d_gencfg)
-add_dependencies(layers_3d costmap_3d_gencfg)
+add_dependencies(costmap_3d ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+add_dependencies(layers_3d ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 add_executable(costmap_3d_node src/costmap_3d_node.cpp)
 target_link_libraries(costmap_3d_node

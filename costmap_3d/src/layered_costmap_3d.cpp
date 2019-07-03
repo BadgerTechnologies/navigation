@@ -209,9 +209,9 @@ bool LayeredCostmap3D::isCurrent() const
   return true;
 }
 
-const Costmap3D* LayeredCostmap3D::getCostmap3D() const
+Costmap3DConstPtr LayeredCostmap3D::getCostmap3D() const
 {
-  return costmap_.get();
+  return costmap_;
 }
 
 bool LayeredCostmap3D::isRolling() const

@@ -163,7 +163,7 @@ void Costmap3DTo2DLayer::updateBounds(double robot_x, double robot_y, double rob
       // Update the regions that have changed
       std::lock_guard<LayeredCostmap3D> lock_layered_costmap_3d(*layered_costmap_3d_);
       // Create a bound-box iterator over the 3D costmap.
-      const Costmap3D* master_3d = layered_costmap_3d_->getCostmap3D();
+      Costmap3DConstPtr master_3d = layered_costmap_3d_->getCostmap3D();
       Costmap3DIndex min_index, max_index;
       master_3d->coordToKeyClamped(extra_min_x_, extra_min_y_, -std::numeric_limits<double>::max(),
                                    min_index);

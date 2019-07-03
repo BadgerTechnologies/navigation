@@ -37,9 +37,18 @@
 #ifndef COSTMAP_3D_COSTMAP_3D_ROS_H_
 #define COSTMAP_3D_COSTMAP_3D_ROS_H_
 
+#include <string>
+#include <memory>
+#include <mutex>
+#include <fcl/geometry/bvh/BVH_model.h>
+#include <fcl/narrowphase/collision_object.h>
+#include <ros/ros.h>
+#include <actionlib/server/simple_action_server.h>
 #include <costmap_2d/costmap_2d_ros.h>
 #include <costmap_3d/layered_costmap_3d.h>
 #include <costmap_3d/costmap_3d_publisher.h>
+#include <costmap_3d/GetPlanCost3DAction.h>
+#include <costmap_3d/GetPlanCost3DService.h>
 #include <costmap_3d/Costmap3DConfig.h>
 #include <dynamic_reconfigure/server.h>
 #include <pluginlib/class_loader.h>
@@ -126,20 +135,27 @@ public:
    * It is assumed the pose is in the frame of the costmap, and the current
    * state of the costmap is queried at the given pose.
    * Currently the padding is applied in all directions.
-   * A negative return value indicates a collision. */
+   * return value represents the cost of the pose, normalized to 0.0 is free
+   * and 1.0 is lethal.
+   * The caller must be holding the lock. */
   virtual double footprintCost(geometry_msgs::Pose pose, double padding = NAN);
 
-  /** @brief Return whether the given pose is in collision. */
+  /** @brief Return whether the given pose is in collision.
+   *
+   * The caller must be holding the lock.*/
   virtual bool footprintCollision(geometry_msgs::Pose pose, double padding = NAN);
 
   /** @brief Return minimum distance to nearest costmap object.
-   * This returns the minimum unsigned distance. So a collision will return 0,
-   * no matter how deeply in collision. */
+   * This returns the minimum unsigned distance. So a collision will return <=0.0.
+   * Negative values are not exact minimum distances. If exact minimum is
+   * required use footprintSignedDistance.
+   * The caller must be holding the lock. */
   virtual double footprintDistance(geometry_msgs::Pose pose, double padding = NAN);
 
   /** @brief Return minimum signed distance to nearest costmap object.
    * This returns the minimum signed distance. So, the deeper a pose goes into
-   * obstacles, the more negative the return value becomes. */
+   * obstacles, the more negative the return value becomes.
+   * The caller must be holding the lock. */
   virtual double footprintSignedDistance(geometry_msgs::Pose pose, double padding = NAN);
 
 protected:
@@ -155,8 +171,27 @@ private:
   pluginlib::ClassLoader<Layer3D> plugin_loader_;
   std::shared_ptr<Costmap3DPublisher> publisher_;
   std::shared_ptr<dynamic_reconfigure::Server<costmap_3d::Costmap3DConfig>> dsrv_;
+  std::shared_ptr<actionlib::SimpleActionServer<GetPlanCost3DAction>> get_plan_cost_action_srv_;
+  ros::ServiceServer get_plan_cost_srv_;
 
+  void getPlanCost3DActionCallback(const actionlib::SimpleActionServer<GetPlanCost3DAction>::GoalConstPtr& goal);
+  bool getPlanCost3DServiceCallback(GetPlanCost3DService::Request& request, GetPlanCost3DService::Response& response);
+
+  void updateMeshResource();
+  std::string getFileNameFromPackageURL(const std::string& url);
+  std::string footprint_mesh_resource_;
   double footprint_3d_padding_;
+
+  using FCLFloat = float;
+  using FCLRobotModel = fcl::BVHModel<fcl::OBBRSS<FCLFloat>>;
+  using FCLRobotModelPtr = std::shared_ptr<FCLRobotModel>;
+
+  FCLRobotModelPtr robot_model_;
+
+  using FCLCollisionObject = fcl::CollisionObject<FCLFloat>;
+  using FCLCollisionObjectPtr = std::shared_ptr<FCLCollisionObject>;
+  FCLCollisionObjectPtr getRobotCollisionObject(const geometry_msgs::Pose& pose);
+  FCLCollisionObjectPtr getWorldCollisionObject();
 };
 // class Costmap3DROS
 }  // namespace costmap_3d

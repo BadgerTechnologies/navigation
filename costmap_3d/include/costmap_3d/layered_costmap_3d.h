@@ -98,7 +98,7 @@ public:
   // The caller must be holding the lock to keep the costmap from updating on
   // them. It is highly recommended to use RAII lock acquisition, such as
   // std::lock_guard.
-  const Costmap3D* getCostmap3D() const;
+  Costmap3DConstPtr getCostmap3D() const;
 
   /** Returns if this costmap's x/y bounds are relative to the base
    */

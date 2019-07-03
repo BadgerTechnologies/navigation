@@ -1,0 +1,62 @@
+# Get the cost of a plan in the 3D costmap.
+# The first two fields are identical to nav_msgs/Path
+Header header
+geometry_msgs/PoseStamped[] poses
+
+# If true, stop as soon as a lethal pose is found.
+# When lazy is set, the pose_costs array will be empty, and
+# the lethal_indices array will contain one entry which is the
+# first lethal index found. The service does not guarantee what
+# order the poses will be processed when lazy is set to True.
+# Also, when set, the plan_cost will contain the cost of the lethal
+# pose only.
+bool lazy
+
+# If true, do not find costs, only return collision information.
+# This uses a more efficient binary collision algorithm.
+# If this is set, the plan_cost and pose_costs are undefined.
+# In collision will be set to true and lethal_indices will contain
+# any indecies in collision. If lazy is also set, processing is stopped
+# after finding one collision (not necessarily the first).
+bool collision_only
+
+# If true, the cost is the distance to the nearest lethal obstacle.
+bool use_distance_for_cost
+
+# If exact_signed_distance is set and use_disance_for_cost is set, return the
+# exact signed distance to the nearest lethal obstacle as the cost.
+bool exact_signed_distance
+
+# Cost threshold considered lethal, normalized to 1.0 for lethal and 0.0 for
+# free space. This can be used to upgrade non-lethal obstacles to being lethal
+# for the check.
+float64 lethal_threshold
+
+# An alternative footprint_mesh_resource to use (in base_footprint frame)
+# If empty, the default stored in the costmap will be used.
+string footprint_mesh_resource
+
+# An axis-aligned bounding box (AABB) to clip the robot "footprint" model.
+# The box is represented by a minimum point and a maximum point.
+# +/-Inf is allowed and will be handled correctly.
+# A NaN in a dimension will be interpreted as -Inf for min and +Inf for max.
+# A box with zero or negative volume will be ignored (so the whole model
+# will be used).
+geometry_msgs/Point footprint_clipping_aabb_min
+geometry_msgs/Point footprint_clipping_aabb_max
+
+# How much padding (in meters) to grow the footprint mesh.
+# (negative numbers will shrink the mesh).
+# 0.0 means no padding.
+# NaN means use the default value from the costmap.
+float64 padding
+---
+bool in_collision
+# A cost value of 1.0 is fatal, 0.0 means no cost.
+# If use_distance_for_cost is set, plan_cost is the minimum distance (so the
+# (possibly signed) distance to nearest obstacle on the path)
+float64 plan_cost
+# If use_distance_for_cost is set, the (possibly signed) distance to the
+# nearest obstacle is returned.
+float64[] pose_costs
+uint32[] lethal_indices

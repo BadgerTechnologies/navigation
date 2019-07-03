@@ -20,32 +20,21 @@
 
   <buildtool_depend>catkin</buildtool_depend>
 
+  <build_depend>message_generation</build_depend>
+  <exec_depend>message_runtime</exec_depend>
   <depend>costmap_2d</depend>
   <depend>tf_conversions</depend>
   <depend>dynamic_reconfigure</depend>
+  <depend>actionlib_msgs</depend>
   <depend>pluginlib</depend>
   <depend>roscpp</depend>
   <depend>geometry_msgs</depend>
-  <!--
-  <depend>moveit_core</depend>
-  -->
+  <depend>octomap</depend>
   <depend>octomap_msgs</depend>
   <depend>pcl_ros</depend>
   <depend>pcl_msgs</depend>
   <depend>pcl_conversions</depend>
-<!--
-  <build_depend>laser_geometry</build_depend>
-  <build_depend>map_msgs</build_depend>
-  <build_depend>message_filters</build_depend>
-  <build_depend>message_generation</build_depend>
-  <build_depend>nav_msgs</build_depend>
-  <build_depend>rostest</build_depend>
-  <build_depend>sensor_msgs</build_depend>
-  <build_depend>std_msgs</build_depend>
-  <build_depend>visualization_msgs</build_depend>
-  <test_depend>map_server</test_depend>
-  <test_depend>rosbag</test_depend>
--->
+  <depend>fcl</depend>
   <export>
     <costmap_2d plugin="${prefix}/costmap_2d_plugins.xml"/>
     <costmap_3d plugin="${prefix}/costmap_3d_plugins.xml"/>
