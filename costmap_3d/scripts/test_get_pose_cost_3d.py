@@ -46,20 +46,41 @@ if __name__ == "__main__":
     req.footprint_clipping_aabb_max.y = float('nan')
     req.footprint_clipping_aabb_max.z = float('nan')
     req.padding = float('nan')
-    for i in range(0,100000):
+    for i in range(0,10):
         pose = geometry_msgs.msg.PoseStamped()
         pose.header.frame_id = "base_footprint"
         pose.pose.position.x = random.uniform(-4.0, 4.0)
         pose.pose.position.y = random.uniform(-4.0, 4.0)
         pose.pose.position.z = 0.0
         theta = random.uniform(-math.pi, math.pi)
-        q = tf.transformations.quaternion_from_euler(0.0, 0.0, theta)
-        pose.pose.orientation.x = q[0]
-        pose.pose.orientation.y = q[1]
-        pose.pose.orientation.z = q[2]
-        pose.pose.orientation.w = q[3]
-        req.poses.append(tf2_geometry_msgs.do_transform_pose(pose, xform))
+        for i in range(0,20):
+            # Simulate optimization step
+            pose.pose.position.x += random.uniform(-.05, .05)
+            pose.pose.position.y += random.uniform(-.05, .05)
+            theta += random.uniform(-math.pi/36, math.pi/36)
 
-    rospy.loginfo("Request: " + str(req))
+            q = tf.transformations.quaternion_from_euler(0.0, 0.0, theta)
+            pose.pose.orientation.x = q[0]
+            pose.pose.orientation.y = q[1]
+            pose.pose.orientation.z = q[2]
+            pose.pose.orientation.w = q[3]
+            req.poses.append(tf2_geometry_msgs.do_transform_pose(pose, xform))
+            # simulate calls for jacobian
+            pose.pose.position.x += .001
+            req.poses.append(tf2_geometry_msgs.do_transform_pose(pose, xform))
+            pose.pose.position.x -= .001
+            pose.pose.position.y += .001
+            req.poses.append(tf2_geometry_msgs.do_transform_pose(pose, xform))
+            pose.pose.position.y -= .001
+            theta += .0062
+            q = tf.transformations.quaternion_from_euler(0.0, 0.0, theta)
+            pose.pose.orientation.x = q[0]
+            pose.pose.orientation.y = q[1]
+            pose.pose.orientation.z = q[2]
+            pose.pose.orientation.w = q[3]
+            req.poses.append(tf2_geometry_msgs.do_transform_pose(pose, xform))
+
+#    rospy.loginfo("Request: " + str(req))
     res = get_cost_srv(req)
     rospy.loginfo("Result: " + str(res))
+    rospy.loginfo("Number of lethals: " + str(len(res.lethal_indices)))

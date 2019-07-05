@@ -40,8 +40,12 @@
 #include <string>
 #include <memory>
 #include <mutex>
+#include <unordered_map>
+#include <limits>
 #include <fcl/geometry/bvh/BVH_model.h>
+#include <fcl/geometry/shape/utility.h>
 #include <fcl/narrowphase/collision_object.h>
+#include <fcl/narrowphase/distance.h>
 #include <ros/ros.h>
 #include <actionlib/server/simple_action_server.h>
 #include <costmap_2d/costmap_2d_ros.h>
@@ -192,6 +196,124 @@ private:
   using FCLCollisionObjectPtr = std::shared_ptr<FCLCollisionObject>;
   FCLCollisionObjectPtr getRobotCollisionObject(const geometry_msgs::Pose& pose);
   FCLCollisionObjectPtr getWorldCollisionObject();
+
+  class DistanceCacheKey
+  {
+  public:
+    DistanceCacheKey(const std::string& mesh_id_,
+                     const std::string& frame_id_,
+                     const geometry_msgs::Pose& pose)
+        : mesh_id(mesh_id_),
+          frame_id(frame_id_),
+          binned_pose(binPose(pose))
+    {
+    }
+
+    std::string mesh_id;
+    std::string frame_id;
+    geometry_msgs::Pose binned_pose;
+    // Bin a pose.
+    geometry_msgs::Pose binPose(const geometry_msgs::Pose& pose)
+    {
+      geometry_msgs::Pose rv;
+      rv.position.x = std::round(pose.position.x * 4) / 4;
+      rv.position.y = std::round(pose.position.y * 4) / 4;
+      rv.position.z = std::round(pose.position.z * 4) / 4;
+      rv.orientation.x = std::round(pose.orientation.x * 32) / 32;
+      rv.orientation.y = std::round(pose.orientation.y * 32) / 32;
+      rv.orientation.z = std::round(pose.orientation.z * 32) / 32;
+      rv.orientation.w = std::round(pose.orientation.w * 32) / 32;
+      return rv;
+    }
+  };
+  struct DistanceCacheKeyHash
+  {
+    size_t operator()(const DistanceCacheKey& key) const
+    {
+      size_t rv;
+      rv = std::hash<std::string>{}(key.mesh_id);
+      // circular shift left 8 bits
+      rv = rv << 8 | (rv >> (std::numeric_limits<size_t>::digits - 8));
+      rv ^= std::hash<std::string>{}(key.frame_id);
+      // circular shift left 8 bits
+      rv = rv << 8 | (rv >> (std::numeric_limits<size_t>::digits - 8));
+      rv ^= std::hash<double>{}(key.binned_pose.position.x +
+                                key.binned_pose.position.y * 256 +
+                                key.binned_pose.position.z * 256 * 256);
+      // circular shift left 8 bits
+      rv = rv << 8 | (rv >> (std::numeric_limits<size_t>::digits - 8));
+      rv ^= std::hash<double>{}(key.binned_pose.orientation.w +
+                                key.binned_pose.orientation.z * 8 +
+                                key.binned_pose.orientation.y * 8 * 8 +
+                                key.binned_pose.orientation.x * 8 * 8 * 8);
+      return rv;
+    }
+  };
+  struct DistanceCacheKeyEqual
+  {
+    bool operator()(const DistanceCacheKey& lhs, const DistanceCacheKey& rhs) const
+    {
+      return lhs.frame_id == rhs.frame_id && lhs.mesh_id == rhs.mesh_id &&
+          lhs.binned_pose.position.x == rhs.binned_pose.position.x &&
+          lhs.binned_pose.position.y == rhs.binned_pose.position.y &&
+          lhs.binned_pose.position.z == rhs.binned_pose.position.z &&
+          lhs.binned_pose.orientation.w == rhs.binned_pose.orientation.w &&
+          lhs.binned_pose.orientation.x == rhs.binned_pose.orientation.x &&
+          lhs.binned_pose.orientation.y == rhs.binned_pose.orientation.y &&
+          lhs.binned_pose.orientation.z == rhs.binned_pose.orientation.z;
+    }
+  };
+  class DistanceCacheEntry
+  {
+  public:
+    DistanceCacheEntry() {}
+    DistanceCacheEntry(const DistanceCacheEntry& rhs)
+        : octomap_box(rhs.octomap_box),
+          octomap_box_tf(rhs.octomap_box_tf),
+          mesh_triangle(rhs.mesh_triangle),
+          mesh_triangle_tf(rhs.mesh_triangle_tf)
+    {
+    }
+    const DistanceCacheEntry& operator=(const DistanceCacheEntry& rhs)
+    {
+      octomap_box = rhs.octomap_box;
+      octomap_box_tf = rhs.octomap_box_tf;
+      mesh_triangle = rhs.mesh_triangle;
+      mesh_triangle_tf = rhs.mesh_triangle_tf;
+      return *this;
+    }
+    DistanceCacheEntry(const fcl::DistanceResult<FCLFloat>& result)
+    {
+      octomap_box = std::dynamic_pointer_cast<fcl::Box<FCLFloat>>(result.primitive1);
+      octomap_box_tf = result.tf1;
+      mesh_triangle = std::dynamic_pointer_cast<fcl::TriangleP<FCLFloat>>(result.primitive2);
+      mesh_triangle_tf = result.tf2;
+    }
+    FCLFloat distanceToNewPose(geometry_msgs::Pose pose)
+    {
+      // Turn pose into tf
+      fcl::Transform3<FCLFloat> new_tf(
+          fcl::Translation3<FCLFloat>(pose.position.x, pose.position.y, pose.position.z) *
+          fcl::Quaternion<FCLFloat>(pose.orientation.w,
+                                    pose.orientation.x,
+                                    pose.orientation.y,
+                                    pose.orientation.z));
+
+      FCLFloat dist;
+      fcl::detail::GJKSolver_libccd<FCLFloat> solver;
+      fcl::Vector3<FCLFloat> p1, p2;
+      solver.shapeTriangleDistance(*octomap_box, octomap_box_tf,
+                                   mesh_triangle->a, mesh_triangle->b, mesh_triangle->c, new_tf,
+                                   &dist, &p1, &p2);
+      return dist;
+    }
+    std::shared_ptr<fcl::Box<FCLFloat>> octomap_box;
+    fcl::Transform3<FCLFloat> octomap_box_tf;
+    std::shared_ptr<fcl::TriangleP<FCLFloat>> mesh_triangle;
+    fcl::Transform3<FCLFloat> mesh_triangle_tf;
+  };
+  std::unordered_map<DistanceCacheKey, DistanceCacheEntry, DistanceCacheKeyHash, DistanceCacheKeyEqual> distance_cache_;
+
 };
 // class Costmap3DROS
 }  // namespace costmap_3d

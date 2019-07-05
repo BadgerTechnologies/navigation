@@ -37,7 +37,7 @@
 #include <costmap_3d/costmap_3d_ros.h>
 #include <fcl/geometry/octree/octree.h>
 #include <fcl/narrowphase/collision.h>
-#include <fcl/narrowphase/distance.h>
+#include <fcl/narrowphase/distance_result.h>
 #include <fcl/geometry/shape/sphere.h>
 #include <pcl/io/vtk_lib_io.h>
 #include <costmap_3d/layered_costmap_3d.h>
@@ -138,6 +138,14 @@ void Costmap3DROS::reconfigureCB(Costmap3DConfig &config, uint32_t level)
 void Costmap3DROS::updateMap()
 {
   std::lock_guard<std::mutex> initialize_lock(initialized_mutex_);
+
+  // For simplicity, on every update, clear out the collision cache.
+  // This is not strictly necessary. The mesh is stored in the cache and does
+  // not change. The only thing that is changing is the costmap. We could go
+  // through the delta map and only remove entries that have had the
+  // corresponding octomap cell go away. This may be impelemnted as a future
+  // improvement.
+  distance_cache_.clear();
 
   if (initialized_ && !isPaused())
   {
@@ -307,15 +315,27 @@ double Costmap3DROS::footprintDistance(geometry_msgs::Pose pose, double padding)
   }
 #endif
 
+  DistanceCacheKey cache_key(footprint_mesh_resource_,
+                             "odom",
+                             pose);
+  auto cache_entry = distance_cache_.find(cache_key);
+  if (cache_entry != distance_cache_.end())
+  {
+    pose_distance = cache_entry->second.distanceToNewPose(pose);
+  }
+
   fcl::DistanceRequest<FCLFloat> request;
   fcl::DistanceResult<FCLFloat> result;
 
   request.abs_err = 0.001;
   request.distance_tolerance = .001;
+  request.enable_nearest_points = true;
 
   result.min_distance = pose_distance;
 
   double distance = fcl::distance(world.get(), robot.get(), request, result);
+
+  distance_cache_[cache_key] = DistanceCacheEntry(result);
 
   return distance;
 }
