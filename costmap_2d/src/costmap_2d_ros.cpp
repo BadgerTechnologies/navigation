@@ -172,6 +172,7 @@ void Costmap2DROS::setUnpaddedRobotFootprintPolygon(const geometry_msgs::Polygon
 
 Costmap2DROS::~Costmap2DROS()
 {
+  boost::recursive_mutex::scoped_lock(map_update_thread_mutex_);
   map_update_thread_shutdown_ = true;
   if (map_update_thread_ != NULL)
   {
@@ -298,7 +299,7 @@ void Costmap2DROS::reconfigureCB(costmap_2d::Costmap2DConfig &config, uint32_t l
   readFootprintFromConfig(config, old_config_);
 
   old_config_ = config;
-
+  boost::recursive_mutex::scoped_lock(map_update_thread_mutex_);
   map_update_thread_ = new boost::thread(boost::bind(&Costmap2DROS::mapUpdateLoop, this, map_update_frequency));
 }
 

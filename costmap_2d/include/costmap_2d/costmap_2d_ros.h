@@ -245,6 +245,7 @@ private:
   dynamic_reconfigure::Server<costmap_2d::Costmap2DConfig> *dsrv_;
 
   boost::recursive_mutex configuration_mutex_;
+  boost::recursive_mutex map_update_thread_mutex_;
 
   ros::Subscriber footprint_sub_;
   ros::Publisher footprint_pub_;
