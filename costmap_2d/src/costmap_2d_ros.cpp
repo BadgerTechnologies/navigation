@@ -553,4 +553,33 @@ void Costmap2DROS::getOrientedFootprint(std::vector<geometry_msgs::Point>& orien
                      padded_footprint_, oriented_footprint);
 }
 
+std::vector<std::string> Costmap2DROS::getLayerNames()
+{
+  std::vector<std::string> rv;
+
+  std::vector < boost::shared_ptr<Layer> > *plugins = layered_costmap_->getPlugins();
+  for (vector<boost::shared_ptr<Layer> >::iterator plugin = plugins->begin(); plugin != plugins->end();
+      ++plugin)
+  {
+    rv.push_back((*plugin)->getName());
+  }
+  return rv;
+}
+
+void Costmap2DROS::clearAABB(geometry_msgs::Point min, geometry_msgs::Point max)
+{
+  ROS_WARN_THROTTLE(1.0, "Costmap2DROS::clearAABB unimplemented!!!");
+}
+
+void Costmap2DROS::clearAABB(geometry_msgs::Point min, geometry_msgs::Point max, const std::vector<std::string>& layers)
+{
+  ROS_WARN_THROTTLE(1.0, "Costmap2DROS::clearAABB unimplemented!!!");
+}
+
+double Costmap2DROS::footprintCost(geometry_msgs::Pose pose, double padding)
+{
+  ROS_WARN_THROTTLE(1.0, "Costmap2DROS::footprintCost unimplemented!!!");
+  return 0.0;
+}
+
 }  // namespace costmap_2d
