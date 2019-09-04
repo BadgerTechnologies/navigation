@@ -37,6 +37,7 @@
  *********************************************************************/
 #include <costmap_2d/layered_costmap.h>
 #include <costmap_2d/costmap_2d_ros.h>
+#include <costmap_2d/costmap_layer.h>
 #include <cstdio>
 #include <string>
 #include <algorithm>
@@ -551,6 +552,48 @@ void Costmap2DROS::getOrientedFootprint(std::vector<geometry_msgs::Point>& orien
   double yaw = tf::getYaw(global_pose.getRotation());
   transformFootprint(global_pose.getOrigin().x(), global_pose.getOrigin().y(), yaw,
                      padded_footprint_, oriented_footprint);
+}
+
+std::set<std::string> Costmap2DROS::getLayerNames()
+{
+  std::set<std::string> rv;
+
+  std::vector < boost::shared_ptr<Layer> > *plugins = layered_costmap_->getPlugins();
+  for (vector<boost::shared_ptr<Layer> >::iterator plugin = plugins->begin(); plugin != plugins->end();
+      ++plugin)
+  {
+    rv.insert((*plugin)->getName());
+  }
+  return rv;
+}
+
+void Costmap2DROS::resetAABB(geometry_msgs::Point min, geometry_msgs::Point max)
+{
+  // No need to reset the master map, as the next update will pull in the changes to each layer.
+  resetAABB(min, max, getLayerNames());
+}
+
+void Costmap2DROS::resetAABB(geometry_msgs::Point min, geometry_msgs::Point max, const std::set<std::string>& layers)
+{
+  boost::lock_guard<Costmap2DROS> lock(*this);
+
+  std::vector < boost::shared_ptr<Layer> > *plugins = layered_costmap_->getPlugins();
+  for (vector<boost::shared_ptr<Layer> >::iterator plugin = plugins->begin(); plugin != plugins->end(); ++plugin)
+  {
+    // Only reset layers that are in the layer set
+    if (layers.find((*plugin)->getName()) != layers.end())
+    {
+      boost::shared_ptr<CostmapLayer> costmap_layer(boost::dynamic_pointer_cast<CostmapLayer>((*plugin)));
+      if (costmap_layer)
+      {
+        costmap_layer->resetAABB(min, max);
+      }
+      else
+      {
+        ROS_WARN_STREAM_THROTTLE(5.0, "Unable to clear layer " << (*plugin)->getName() << ": not a CostmapLayer");
+      }
+    }
+  }
 }
 
 }  // namespace costmap_2d
