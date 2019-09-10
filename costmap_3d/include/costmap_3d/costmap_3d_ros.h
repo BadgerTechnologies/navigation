@@ -134,28 +134,68 @@ public:
    * It is assumed the pose is in the frame of the costmap, and the current
    * state of the costmap is queried at the given pose.
    * Currently the padding is applied in all directions.
-   * return value represents the cost of the pose, normalized to 0.0 is free
-   * and 1.0 is lethal.
-   * The caller must be holding the lock. */
-  virtual double footprintCost(geometry_msgs::Pose pose, double padding = NAN);
+   *
+   * The caller must be holding the lock.
+   *
+   * @param pose                    pose to query
+   * @param lethal_threshold        cost greater or equal to this threshold are considered lethal
+   * @param footprint_mesh_resource which footprint mesh to use, empty string means default
+   * @param padding                 padding to add to the footprint. NAN means use default padding
+   *
+   * @returns negative for lethal, otherwise the cost of the pose */
+  virtual double footprintCost(geometry_msgs::Pose pose,
+                               double lethal_threshold = LETHAL,
+                               std::string footprint_mesh_resource = "",
+                               double padding = NAN);
 
   /** @brief Return whether the given pose is in collision.
    *
-   * The caller must be holding the lock.*/
-  virtual bool footprintCollision(geometry_msgs::Pose pose, double padding = NAN);
+   * The caller must be holding the lock.
+   *
+   * @param pose                    pose to query
+   * @param lethal_threshold        cost greater or equal to this threshold are considered lethal
+   * @param footprint_mesh_resource which footprint mesh to use, empty string means default
+   * @param padding                 padding to add to the footprint. NAN means use default padding
+   * 
+   * @returns true if in collision, false otherwise */
+  virtual bool footprintCollision(geometry_msgs::Pose pose,
+                                  double lethal_threshold = LETHAL,
+                                  std::string footprint_mesh_resource = "",
+                                  double padding = NAN);
 
-  /** @brief Return minimum distance to nearest costmap object.
-   * This returns the minimum unsigned distance. So a collision will return <=0.0.
+  /** @brief Return minimum distance to the nearest lethal costmap object.
+   * This returns the minimum unsigned distance or negative on a collision.
    * Negative values are not exact minimum distances. If exact minimum is
    * required use footprintSignedDistance.
-   * The caller must be holding the lock. */
-  virtual double footprintDistance(geometry_msgs::Pose pose, double padding = NAN);
+   *
+   * The caller must be holding the lock.
+   *
+   * @param pose                    pose to query
+   * @param lethal_threshold        cost greater or equal to this threshold are considered lethal
+   * @param footprint_mesh_resource which footprint mesh to use, empty string means default
+   * @param padding                 padding to add to the footprint. NAN means use default padding
+   * 
+   * @returns negative on collision, otherwise distance to nearest obstacle */
+  virtual double footprintDistance(geometry_msgs::Pose pose,
+                                   double lethal_threshold = LETHAL,
+                                   std::string footprint_mesh_resource = "",
+                                   double padding = NAN);
 
   /** @brief Return minimum signed distance to nearest costmap object.
    * This returns the minimum signed distance. So, the deeper a pose goes into
    * obstacles, the more negative the return value becomes.
-   * The caller must be holding the lock. */
-  virtual double footprintSignedDistance(geometry_msgs::Pose pose, double padding = NAN);
+   * The caller must be holding the lock.
+   *
+   * @param pose                    pose to query
+   * @param lethal_threshold        cost greater or equal to this threshold are considered lethal
+   * @param footprint_mesh_resource which footprint mesh to use, empty string means default
+   * @param padding                 padding to add to the footprint. NAN means use default padding
+   *
+   * @returns exact signed distance to nearest obstacle */
+  virtual double footprintSignedDistance(geometry_msgs::Pose pose,
+                                         double lethal_threshold = LETHAL,
+                                         std::string footprint_mesh_resource = "",
+                                         double padding = NAN);
 
 protected:
   std::shared_ptr<LayeredCostmap3D> layered_costmap_3d_;
@@ -178,6 +218,22 @@ private:
   template <typename RequestType, typename ResponseType>
   void processPlanCost3D(RequestType& request, ResponseType& response);
 
+  // turn this into a map of pairs of string, double => Costmap3DQuery
+  // use a rw lock on it to speed up multi-thread
+  // change (or extend?) the query class to *track* the costmap via subscribing to the delta updates (in process) have
+  // it detect a loss of sync and resubscribe just like the costmap itself.
+  // this way queries do not requiring locking the master costmap.
+  //
+  // Or, instead of different queries for each mesh, add an interface by which
+  // a caller can get a reference to their own query object. Leave the current
+  // direct-querying intact, as this may be important for feasability checks.
+  // But a direct query object would have its own subscription to the costmap,
+  // and its own copies of the mesh/models, and its own current mesh/padding
+  // so other queries don't interfere w/ that client.
+  // Create query objects for each call.
+  // Add an interface to the query object to lock the query object so the map doesn't update
+  // Query objects themselves could buffer the various models that have been
+  // used on that object directly to speed up switching models?
   std::shared_ptr<Costmap3DQuery> query_;
 
   std::string footprint_mesh_resource_;

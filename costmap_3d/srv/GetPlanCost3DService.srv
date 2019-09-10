@@ -8,24 +8,27 @@ geometry_msgs/PoseStamped[] poses
 # no further processing is done.
 bool lazy
 
-# If true, do not find costs, only return collision information.
-# This uses a more efficient binary collision algorithm.
-# If this is set, the plan_cost and pose_costs are undefined.
-# In collision will be set to true and lethal_indices will contain
-# any indecies in collision. If lazy is also set, processing is stopped
-# after finding one collision (not necessarily the first).
-bool collision_only
+# Return costs of each pose as normal
+uint8 COST_QUERY_MODE_COST=0
+# Do not find actual costs, just binary collision information
+uint8 COST_QUERY_MODE_COLLISION_ONLY=1
+# Do not find actual costs, find distances instead
+uint8 COST_QUERY_MODE_DISTANCE=2
+# Do not find actual costs, find exact signed distances instead
+uint8 COST_QUERY_MODE_EXACT_SIGNED_DISTANCE=3
+# Set to one of the above COST_QUERY_MODE_* to control query mode.
+# The default is COST_QUERY_MODE_COST.
+uint8 cost_query_mode
 
-# If true, the cost is the distance to the nearest lethal obstacle.
-bool use_distance_for_cost
-
-# If exact_signed_distance is set and use_disance_for_cost is set, return the
-# exact signed distance to the nearest lethal obstacle as the cost.
-bool exact_signed_distance
-
-# Cost threshold considered lethal, normalized to 1.0 for lethal and 0.0 for
-# free space. This can be used to upgrade non-lethal obstacles to being lethal
-# for the check.
+# Cost threshold considered lethal.
+# Costs stored in Costmap3D are stored in "log-odds" form.
+# A log odds value of FREE means freespace.
+# A log odds value of LETHAL means a lethal collision.
+# Anything in between represents finite but non-zero cost.
+float64 FREE_THRESHOLD=-10.0
+float64 LETHAL_THRESHOLD=10.0
+# Any costmap 3d voxel greater than or equal to this threshold will be
+# considered lethal.
 float64 lethal_threshold
 
 # An alternative footprint_mesh_resource to use (in base_footprint frame)
@@ -36,14 +39,21 @@ string footprint_mesh_resource
 # (negative numbers will shrink the mesh).
 # 0.0 means no padding.
 # NaN means use the default value from the costmap.
-float64 padding
+# To precisely control padding, use an alternate mesh, as the generated mesh
+# may pad in a naive way.
+float32 padding
 ---
-bool in_collision
-# A cost value of 1.0 is fatal, 0.0 means no cost.
-# If use_distance_for_cost is set, plan_cost is the minimum distance (so the
-# (possibly signed) distance to nearest obstacle on the path)
-float64 plan_cost
-# If use_distance_for_cost is set, the (possibly signed) distance to the
-# nearest obstacle is returned.
+# The aggregate cost value across the poses.
+# A negative cost value indicates collision.
+# A cost value of 0.0 means no cost.
+# A postive cost value indicates non-zero, yet non-lethal cost.
+# When running in one of the distance modes, the plan_cost will be the minimum
+# distance across all the poses. Note that all forms of distance check will return
+# a negative distance for a collision, but only in the exact signed mode will
+# the negative value be an exact signed distance.
+float64 cost
+# The cost of each pose.
+# When running in one of the distance modes, the "cost" will instead be the
+# distance to the nearest obstacle in meters.
 float64[] pose_costs
 uint32[] lethal_indices

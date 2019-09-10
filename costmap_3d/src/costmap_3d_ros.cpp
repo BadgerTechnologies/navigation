@@ -283,33 +283,11 @@ void Costmap3DROS::processPlanCost3D(RequestType& request, ResponseType& respons
   kill(getpid(), 12);
 #endif
 
-  // For now, query each pose in a row. We could setup a continuous collision
-  // FCL or a broad-phase check which are faster in the lazy case.
-
   // TODO: handle lethal_threshold.
   // TODO: handle footprint_mesh_resource
+  // TODO: handle padding
 
-  bool collision_only = request.collision_only;
-  bool use_distance_for_cost = request.use_distance_for_cost;
-  bool exact_signed_distance = request.exact_signed_distance;
-
-  if (collision_only)
-  {
-    use_distance_for_cost = false;
-  }
-  if (!use_distance_for_cost)
-  {
-    exact_signed_distance = false;
-  }
-
-  if (use_distance_for_cost)
-  {
-    response.plan_cost = std::numeric_limits<double>::max();
-  }
-  else
-  {
-    response.plan_cost = 0.0;
-  }
+  response.plan_cost = std::numeric_limits<double>::max();
 
   response.pose_costs.reserve(request.poses.size());
   response.lethal_indices.reserve(request.poses.size());
@@ -326,27 +304,22 @@ void Costmap3DROS::processPlanCost3D(RequestType& request, ResponseType& respons
                                request.poses[i].header.frame_id);
     }
     double pose_cost;
-    if (collision_only)
+    if (request.cost_query_mode == GetPlanCost3DService::Request::COST_QUERY_MODE_COLLISON_ONLY)
     {
-      pose_cost = footprintCollision(pose, request.padding) ? 1.0 : 0.0;
+      pose_cost = footprintCollision(pose, request.padding) ? -1.0 : 0.0;
+    }
+    else if (request.cost_query_mode == GetPlanCost3DService::Request::COST_QUERY_MODE_DISTANCE)
+    {
+      pose_cost = footprintDistance(pose, request.padding);
+    }
+    else if (request.cost_query_mode == GetPlanCost3DService::Request::COST_QUERY_MODE_EXACT_SIGNED_DISTANCE)
+    {
+      pose_cost = footprintSignedDistance(pose, request.padding);
     }
     else
     {
-      if (use_distance_for_cost)
-      {
-        if (exact_signed_distance)
-        {
-          pose_cost = footprintSignedDistance(pose, request.padding);
-        }
-        else
-        {
-          pose_cost = footprintDistance(pose, request.padding);
-        }
-      }
-      else
-      {
-        pose_cost = footprintCost(pose, request.padding);
-      }
+      pose_cost = footprintCost(pose, request.padding);
+    }
     }
     if (use_distance_for_cost)
     {
@@ -371,7 +344,6 @@ void Costmap3DROS::processPlanCost3D(RequestType& request, ResponseType& respons
     response.pose_costs.push_back(pose_cost);
     if (collision)
     {
-      response.in_collision = true;
       response.lethal_indices.push_back(i);
     }
 

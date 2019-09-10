@@ -68,7 +68,7 @@ public:
   virtual void setCostmap(const std::shared_ptr<LayeredCostmap3D>& layered_costmap_3d);
 
   /** @brief Update the default mesh to use for queries. */
-  void updateMeshResource(const std::string& mesh_resource);
+  void updateMeshResource(const std::string& mesh_resource, double padding = 0.0);
 
   /** @brief Get the cost to put the robot base at the given pose.
    *
@@ -78,12 +78,12 @@ public:
    * return value represents the cost of the pose, normalized to 0.0 is free
    * and 1.0 is lethal.
    * The caller must be holding the lock on the associated costmap. */
-  virtual double footprintCost(geometry_msgs::Pose pose, double padding = NAN);
+  virtual double footprintCost(geometry_msgs::Pose pose, double lethal_threshold = LETHAL);
 
   /** @brief Return whether the given pose is in collision.
    *
    * The caller must be holding the lock on the associated costmap. */
-  virtual bool footprintCollision(geometry_msgs::Pose pose, double padding = NAN);
+  virtual bool footprintCollision(geometry_msgs::Pose pose, double lethal_threshold = LETHAL);
 
   /** @brief Return minimum distance to nearest costmap object.
    * This returns the minimum unsigned distance. So a collision will return <=0.0.
