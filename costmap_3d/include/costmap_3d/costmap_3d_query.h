@@ -67,36 +67,35 @@ public:
    * the resolution changes. */
   virtual void setCostmap(const std::shared_ptr<LayeredCostmap3D>& layered_costmap_3d);
 
-  /** @brief Update the default mesh to use for queries. */
+  /** @brief Update the mesh to use for queries. */
   void updateMeshResource(const std::string& mesh_resource, double padding = 0.0);
 
   /** @brief Get the cost to put the robot base at the given pose.
    *
    * It is assumed the pose is in the frame of the costmap, and the current
    * state of the costmap is queried at the given pose.
-   * Currently the padding is applied in all directions.
-   * return value represents the cost of the pose, normalized to 0.0 is free
-   * and 1.0 is lethal.
+   * return value represents the cost of the pose
+   * negative is collision, zero is free.
    * The caller must be holding the lock on the associated costmap. */
-  virtual double footprintCost(geometry_msgs::Pose pose, double lethal_threshold = LETHAL);
+  virtual double footprintCost(geometry_msgs::Pose pose);
 
   /** @brief Return whether the given pose is in collision.
    *
    * The caller must be holding the lock on the associated costmap. */
-  virtual bool footprintCollision(geometry_msgs::Pose pose, double lethal_threshold = LETHAL);
+  virtual bool footprintCollision(geometry_msgs::Pose pose);
 
   /** @brief Return minimum distance to nearest costmap object.
-   * This returns the minimum unsigned distance. So a collision will return <=0.0.
+   * This returns the minimum unsigned distance. So a collision will return <0.0.
    * Negative values are not exact minimum distances. If exact minimum is
    * required use footprintSignedDistance.
    * The caller must be holding the lock on the associated costmap. */
-  virtual double footprintDistance(geometry_msgs::Pose pose, double padding = NAN);
+  virtual double footprintDistance(geometry_msgs::Pose pose);
 
   /** @brief Return minimum signed distance to nearest costmap object.
    * This returns the minimum signed distance. So, the deeper a pose goes into
    * obstacles, the more negative the return value becomes.
    * The caller must be holding the lock on the associated costmap. */
-  virtual double footprintSignedDistance(geometry_msgs::Pose pose, double padding = NAN);
+  virtual double footprintSignedDistance(geometry_msgs::Pose pose);
 
 protected:
   std::shared_ptr<LayeredCostmap3D> layered_costmap_3d_;

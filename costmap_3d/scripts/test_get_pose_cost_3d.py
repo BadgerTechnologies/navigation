@@ -43,7 +43,6 @@ if __name__ == "__main__":
     req.collision_only = False
     req.use_distance_for_cost = True
     req.exact_signed_distance = False
-    req.lethal_threshold = 1.0
     req.footprint_mesh_resource = ""
     req.padding = float('nan')
 #    for i in range(0,35*4*5*8):

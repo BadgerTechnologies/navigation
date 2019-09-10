@@ -20,17 +20,6 @@ uint8 COST_QUERY_MODE_EXACT_SIGNED_DISTANCE=3
 # The default is COST_QUERY_MODE_COST.
 uint8 cost_query_mode
 
-# Cost threshold considered lethal.
-# Costs stored in Costmap3D are stored in "log-odds" form.
-# A log odds value of FREE means freespace.
-# A log odds value of LETHAL means a lethal collision.
-# Anything in between represents finite but non-zero cost.
-float64 FREE_THRESHOLD=-10.0
-float64 LETHAL_THRESHOLD=10.0
-# Any costmap 3d voxel greater than or equal to this threshold will be
-# considered lethal.
-float64 lethal_threshold
-
 # An alternative footprint_mesh_resource to use (in base_footprint frame)
 # If empty, the default stored in the costmap will be used.
 string footprint_mesh_resource

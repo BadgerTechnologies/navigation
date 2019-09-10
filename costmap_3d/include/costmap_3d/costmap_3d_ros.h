@@ -138,13 +138,11 @@ public:
    * The caller must be holding the lock.
    *
    * @param pose                    pose to query
-   * @param lethal_threshold        cost greater or equal to this threshold are considered lethal
    * @param footprint_mesh_resource which footprint mesh to use, empty string means default
    * @param padding                 padding to add to the footprint. NAN means use default padding
    *
    * @returns negative for lethal, otherwise the cost of the pose */
   virtual double footprintCost(geometry_msgs::Pose pose,
-                               double lethal_threshold = LETHAL,
                                std::string footprint_mesh_resource = "",
                                double padding = NAN);
 
@@ -153,13 +151,11 @@ public:
    * The caller must be holding the lock.
    *
    * @param pose                    pose to query
-   * @param lethal_threshold        cost greater or equal to this threshold are considered lethal
    * @param footprint_mesh_resource which footprint mesh to use, empty string means default
    * @param padding                 padding to add to the footprint. NAN means use default padding
    * 
    * @returns true if in collision, false otherwise */
   virtual bool footprintCollision(geometry_msgs::Pose pose,
-                                  double lethal_threshold = LETHAL,
                                   std::string footprint_mesh_resource = "",
                                   double padding = NAN);
 
@@ -171,13 +167,11 @@ public:
    * The caller must be holding the lock.
    *
    * @param pose                    pose to query
-   * @param lethal_threshold        cost greater or equal to this threshold are considered lethal
    * @param footprint_mesh_resource which footprint mesh to use, empty string means default
    * @param padding                 padding to add to the footprint. NAN means use default padding
    * 
    * @returns negative on collision, otherwise distance to nearest obstacle */
   virtual double footprintDistance(geometry_msgs::Pose pose,
-                                   double lethal_threshold = LETHAL,
                                    std::string footprint_mesh_resource = "",
                                    double padding = NAN);
 
@@ -187,13 +181,11 @@ public:
    * The caller must be holding the lock.
    *
    * @param pose                    pose to query
-   * @param lethal_threshold        cost greater or equal to this threshold are considered lethal
    * @param footprint_mesh_resource which footprint mesh to use, empty string means default
    * @param padding                 padding to add to the footprint. NAN means use default padding
    *
    * @returns exact signed distance to nearest obstacle */
   virtual double footprintSignedDistance(geometry_msgs::Pose pose,
-                                         double lethal_threshold = LETHAL,
                                          std::string footprint_mesh_resource = "",
                                          double padding = NAN);
 

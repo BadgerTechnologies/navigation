@@ -283,7 +283,6 @@ void Costmap3DROS::processPlanCost3D(RequestType& request, ResponseType& respons
   kill(getpid(), 12);
 #endif
 
-  // TODO: handle lethal_threshold.
   // TODO: handle footprint_mesh_resource
   // TODO: handle padding
 

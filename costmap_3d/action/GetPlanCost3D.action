@@ -20,11 +20,6 @@ uint8 COST_QUERY_MODE_EXACT_SIGNED_DISTANCE=3
 # The default is COST_QUERY_MODE_COST.
 uint8 cost_query_mode
 
-# Cost threshold considered lethal, normalized to 1.0 for lethal and 0.0 for
-# free space. This can be used to upgrade non-lethal obstacles to being lethal
-# for a collision check.
-float64 lethal_threshold
-
 # An alternative footprint_mesh_resource to use (in base_footprint frame)
 # If empty, the default stored in the costmap will be used.
 string footprint_mesh_resource
