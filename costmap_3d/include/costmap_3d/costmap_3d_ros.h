@@ -38,6 +38,7 @@
 #define COSTMAP_3D_COSTMAP_3D_ROS_H_
 
 #include <string>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <ros/ros.h>
@@ -156,7 +157,7 @@ public:
    * 
    * @returns true if in collision, false otherwise */
   virtual bool footprintCollision(geometry_msgs::Pose pose,
-                                  std::string footprint_mesh_resource = "",
+                                  const std::string& footprint_mesh_resource = "",
                                   double padding = NAN);
 
   /** @brief Return minimum distance to the nearest lethal costmap object.
@@ -226,7 +227,10 @@ private:
   // Add an interface to the query object to lock the query object so the map doesn't update
   // Query objects themselves could buffer the various models that have been
   // used on that object directly to speed up switching models?
-  std::shared_ptr<Costmap3DQuery> query_;
+  using QueryMap = std::map<std::pair<std::string, double>, std::shared_ptr<Costmap3DQuery>>;
+  QueryMap query_map_;
+  // assumes costmap is locked
+  const QueryMap* getQuery(const std::string& footprint_mesh_resource, double padding);
 
   std::string footprint_mesh_resource_;
   double footprint_3d_padding_;

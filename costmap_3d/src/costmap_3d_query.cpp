@@ -157,17 +157,14 @@ std::string Costmap3DQuery::getFileNameFromPackageURL(const std::string& url)
   return mod_url;
 }
 
-double Costmap3DQuery::footprintCost(geometry_msgs::Pose pose, double padding)
+double Costmap3DQuery::footprintCost(geometry_msgs::Pose pose)
 {
-  // TODO: implement
-  ROS_WARN_THROTTLE(1.0, "costmap_3d: footprintCost is not yet implemented");
-  // XXX normalize return to [0.0, 1.0]?
-  return INFINITY;
+  // TODO: implement as cost query. For now, just translate a collision to cost
+  return footprintCollision(pose) ? -1.0 : 0.0
 }
 
-bool Costmap3DQuery::footprintCollision(geometry_msgs::Pose pose, double padding)
+bool Costmap3DQuery::footprintCollision(geometry_msgs::Pose pose)
 {
-  // TODO: handle padding
   assert(world_obj_);
   assert(robot_obj_);
 
@@ -182,9 +179,8 @@ bool Costmap3DQuery::footprintCollision(geometry_msgs::Pose pose, double padding
   return result.isCollision();
 }
 
-double Costmap3DQuery::footprintDistance(geometry_msgs::Pose pose, double padding)
+double Costmap3DQuery::footprintDistance(geometry_msgs::Pose pose)
 {
-  // TODO: handle padding
   assert(world_obj_);
   assert(robot_obj_);
 
@@ -260,9 +256,10 @@ double Costmap3DQuery::footprintDistance(geometry_msgs::Pose pose, double paddin
   return distance;
 }
 
-double Costmap3DQuery::footprintSignedDistance(geometry_msgs::Pose pose, double padding)
+double Costmap3DQuery::footprintSignedDistance(geometry_msgs::Pose pose)
 {
-  // TODO: handle padding
+  // TODO: Figure out how to apply distance cache to signed distance.
+  // TODO: Think about how to make this work w/ meshes representing a solid and octomaps
   assert(world_obj_);
   assert(robot_obj_);
   FCLCollisionObjectPtr robot(getRobotCollisionObject(pose));

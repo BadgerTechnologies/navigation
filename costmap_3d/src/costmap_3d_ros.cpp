@@ -41,6 +41,7 @@
 #include <unistd.h>
 #include <signal.h>
 #endif
+#include <cmath>
 #include <costmap_3d/costmap_3d_ros.h>
 #include <costmap_3d/layered_costmap_3d.h>
 #include <tf/transform_datatypes.h>
@@ -80,7 +81,6 @@ Costmap3DROS::Costmap3DROS(std::string name, tf::TransformListener& tf) :
   }
 
   publisher_.reset(new Costmap3DPublisher(private_nh, layered_costmap_3d_.get(), "costmap_3d"));
-  query_.reset(new Costmap3DQuery());
 
   dsrv_.reset(new dynamic_reconfigure::Server<Costmap3DConfig>(ros::NodeHandle("~/" + name + "/costmap_3d")));
   dynamic_reconfigure::Server<Costmap3DConfig>::CallbackType cb = std::bind(&Costmap3DROS::reconfigureCB,
@@ -88,8 +88,6 @@ Costmap3DROS::Costmap3DROS(std::string name, tf::TransformListener& tf) :
                                                                             std::placeholders::_1,
                                                                             std::placeholders::_2);
   dsrv_->setCallback(cb);
-
-  query_->updateMeshResource(footprint_mesh_resource_);
 
   get_plan_cost_action_srv_.reset(new actionlib::SimpleActionServer<GetPlanCost3DAction>(
           private_nh,
@@ -135,8 +133,6 @@ void Costmap3DROS::reconfigureCB(Costmap3DConfig &config, uint32_t level)
 
   layered_costmap_3d_->setBounds(min, max);
   layered_costmap_3d_->setResolution();
-
-  query_->setCostmap(layered_costmap_3d_);
 
   footprint_3d_padding_ = config.footprint_3d_padding;
 }
@@ -234,24 +230,55 @@ void Costmap3DROS::clearAABB(geometry_msgs::Point min, geometry_msgs::Point max,
   }
 }
 
-double Costmap3DROS::footprintCost(geometry_msgs::Pose pose, double padding)
+const Costmap3DROS::QueryMap* Costmap3DROS::getQuery(const std::string& footprint_mesh_resource, double padding)
 {
-  return query_->footprintCost(pose, padding);
+  if (footprint_mesh_resource == "")
+  {
+    footprint_mesh_resource = footprint_mesh_resource_;
+  }
+  if (!isfinite(padding))
+  {
+    padding = footprint_3d_padding_;
+  }
+  auto query_it = query_map_.find(std::make_pair(footprint_mesh_resource, padding));
+  if (query_it == query_map_.end())
+  {
+    // Query object does not exist, create it and add it to the map
+    std::shared_ptr<Costmap3DQuery> query;
+    query.reset(new Costmap3DQuery());
+    query->setCostmap(layered_costmap_3d_);
+    query->updateMeshResource(footprint_mesh_resource, padding);
+    query_it = query_map_.insert(std::make_pair(std::make_pair(footprint_mesh_resource, padding), query)).first;
+  }
+  return &(*query_it);
 }
 
-bool Costmap3DROS::footprintCollision(geometry_msgs::Pose pose, double padding)
+double Costmap3DROS::footprintCost(geometry_msgs::Pose pose,
+                                   const std::string& footprint_mesh_resource,
+                                   double padding)
 {
-  return query_->footprintCollision(pose, padding);
+  return getQuery(footprint_mesh_resource, padding)->footprintCost(pose);
 }
 
-double Costmap3DROS::footprintDistance(geometry_msgs::Pose pose, double padding)
+bool Costmap3DROS::footprintCollision(geometry_msgs::Pose pose,
+                                      const std::string& footprint_mesh_resource,
+                                      double padding)
 {
-  return query_->footprintDistance(pose, padding);
+  return getQuery(footprint_mesh_resource, padding)->footprintCollision(pose);
 }
 
-double Costmap3DROS::footprintSignedDistance(geometry_msgs::Pose pose, double padding)
+double Costmap3DROS::footprintDistance(geometry_msgs::Pose pose,
+                                       const std::string& footprint_mesh_resource,
+                                       double padding)
 {
-  return query_->footprintSignedDistance(pose, padding);
+  return getQuery(footprint_mesh_resource, padding)->footprintDistance(pose);
+}
+
+double Costmap3DROS::footprintSignedDistance(geometry_msgs::Pose pose,
+                                             const std::string& footprint_mesh_resource,
+                                             double padding)
+{
+  return getQuery(footprint_mesh_resource, padding)->footprintSignedDistance(pose);
 }
 
 void Costmap3DROS::getPlanCost3DActionCallback(
@@ -286,7 +313,15 @@ void Costmap3DROS::processPlanCost3D(RequestType& request, ResponseType& respons
   // TODO: handle footprint_mesh_resource
   // TODO: handle padding
 
-  response.plan_cost = std::numeric_limits<double>::max();
+  if (request.cost_query_mode == GetPlanCost3DService::Request::COST_QUERY_MODE_DISTANCE ||
+      request.cost_query_mode == GetPlanCost3DService::Request::COST_QUERY_MODE_EXACT_SIGNED_DISTANCE)
+  {
+    response.plan_cost = std::numeric_limits<double>::max();
+  }
+  else
+  {
+    response.plan_cost = 0.0;
+  }
 
   response.pose_costs.reserve(request.poses.size());
   response.lethal_indices.reserve(request.poses.size());
@@ -305,40 +340,58 @@ void Costmap3DROS::processPlanCost3D(RequestType& request, ResponseType& respons
     double pose_cost;
     if (request.cost_query_mode == GetPlanCost3DService::Request::COST_QUERY_MODE_COLLISON_ONLY)
     {
-      pose_cost = footprintCollision(pose, request.padding) ? -1.0 : 0.0;
+      pose_cost = footprintCollision(pose, request.footprint_mesh_resource, request.padding) ? -1.0 : 0.0;
     }
     else if (request.cost_query_mode == GetPlanCost3DService::Request::COST_QUERY_MODE_DISTANCE)
     {
-      pose_cost = footprintDistance(pose, request.padding);
+      pose_cost = footprintDistance(pose, request.footprint_mesh_resource, request.padding);
     }
     else if (request.cost_query_mode == GetPlanCost3DService::Request::COST_QUERY_MODE_EXACT_SIGNED_DISTANCE)
     {
-      pose_cost = footprintSignedDistance(pose, request.padding);
+      pose_cost = footprintSignedDistance(pose, request.footprint_mesh_resource, request.padding);
     }
     else
     {
-      pose_cost = footprintCost(pose, request.padding);
+      pose_cost = footprintCost(pose, request.footprint_mesh_resource, request.padding);
     }
-    }
-    if (use_distance_for_cost)
+    // negative is a collision
+    if (pose_cost < 0.0)
     {
-      // non-positive distance is a collision
-      if (pose_cost <= 0.0)
-      {
-        collision = true;
-      }
+      collision = true;
+    }
+    if (request.cost_query_mode == GetPlanCost3DService::Request::COST_QUERY_MODE_DISTANCE ||
+        request.cost_query_mode == GetPlanCost3DService::Request::COST_QUERY_MODE_EXACT_SIGNED_DISTANCE)
+    {
+      // in distance mode, the plan_cost is the minimum distance across all poses
       response.plan_cost = std::min(response.plan_cost, pose_cost);
     }
     else
     {
-      // lethal (or higher) cost is a collision
-      if (pose_cost >= 1.0)
+      // in collision or cost mode, plan cost will either be negative if there is a collision
+      // or the aggregate non-lethal cost.
+      if (collision)
       {
-        collision = true;
+        if (response.plan_cost >= 0.0)
+        {
+          // this pose is in collision, but the plan hasn't seen a collision yet.
+          // reset the plan_cost to this pose's cost
+          response.plan_cost = pose_cost;
+        }
+        else
+        {
+          // otherwise, add the lethal pose_cost to the plan_cost (making it more negative)
+          response.plan_cost += pose_cost;
+        }
       }
-      // Make the plan cost more and more lethal for each non-zero cost.
-      // Ensure that just one lethal pose will keep the cost lethal.
-      response.plan_cost = 1.0 - ((1.0 - response.plan_cost) * (1.0 - pose_cost));
+      else
+      {
+        if (response.plan_cost >= 0.0)
+        {
+          // not in collision, plan not in collision, add the cost
+          response.plan_cost += pose_cost;
+        }
+        // don't add the non-lethal cost to a lethal plan
+      }
     }
     response.pose_costs.push_back(pose_cost);
     if (collision)
