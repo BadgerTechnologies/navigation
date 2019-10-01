@@ -35,6 +35,7 @@
  * Author: C. Andy Martin
  *********************************************************************/
 #include <costmap_3d/costmap_3d_query.h>
+#include <sstream>
 #include <fcl/geometry/octree/octree.h>
 #include <fcl/narrowphase/collision.h>
 #include <fcl/narrowphase/distance_result.h>
@@ -46,22 +47,19 @@
 namespace costmap_3d
 {
 
-Costmap3DQuery::Costmap3DQuery()
+Costmap3DQuery::Costmap3DQuery(const std::shared_ptr<LayeredCostmap3D>& layered_costmap_3d,
+    const std::string& mesh_resource,
+    double padding = 0.0)
+    : layered_costmap_3d_(layered_costmap_3d)
 {
-}
-
-Costmap3DQuery::~Costmap3DQuery()
-{
-}
-
-void Costmap3DQuery::setCostmap(const std::shared_ptr<LayeredCostmap3D>& layered_costmap_3d)
-{
-  layered_costmap_3d_ = layered_costmap_3d;
-  std::shared_ptr<const octomap::OcTree> octree_ptr(layered_costmap_3d_->getCostmap3D());
-  std::shared_ptr<fcl::OcTree<FCLFloat>> fcl_octree_ptr(new fcl::OcTree<FCLFloat>(octree_ptr));
-  world_obj_ = FCLCollisionObjectPtr(new fcl::CollisionObject<FCLFloat>(fcl_octree_ptr));
+  std::lock_guard<std::mutex> lock(query_mutex_);
+  checkCostmap();
+  updateMeshRescource(mesh_resource, padding);
+  std::stringstream ss;
+  ss << "costmap_3d_query_" << mesh_resource << "_" << padding;
+  costmap_update_complete_callback_id_ = ss.str();
   layered_costmap_3d_->registerUpdateCompleteCallback(
-      "costmap_3d_query",
+      costmap_update_complete_callback_id_,
       std::bind(&Costmap3DQuery::updateCompleteCallback,
                 this,
                 std::placeholders::_1,
@@ -69,27 +67,39 @@ void Costmap3DQuery::setCostmap(const std::shared_ptr<LayeredCostmap3D>& layered
                 std::placeholders::_3));
 }
 
+Costmap3DQuery::~Costmap3DQuery()
+{
+}
+
+void Costmap3DQuery::checkCostmap()
+{
+  if (layered_costmap_3d_->getCostmap3D() != octree_ptr_)
+  {
+    // The octomap has been reallocated, change where we are pointing.
+    octree_ptr_ = layered_costmap_3d_->getCostmap3D();
+    fcl_octree_ptr_.reset(new fcl::OcTree<FCLFloat>(octree_ptr));
+    world_obj_ = FCLCollisionObjectPtr(new fcl::CollisionObject<FCLFloat>(fcl_octree_ptr));
+  }
+}
+
 void Costmap3DQuery::updateCompleteCallback(LayeredCostmap3D* layered_costmap_3d,
                                             const Costmap3D& delta,
                                             const Costmap3D& bounds_map)
 {
+  std::lock_guard<std::mutex> lock(query_mutex_);
   // For simplicity, on every update, clear out the collision cache.
   // This is not strictly necessary. The mesh is stored in the cache and does
   // not change. The only thing that is changing is the costmap. We could go
   // through the delta map and only remove entries that have had the
   // corresponding octomap cell go away. This may be impelemnted as a future
   // improvement.
-  for (auto distance_cache : distance_caches_)
-  {
-    distance_cache.second.clear();
-  }
-  for (auto micro_distance_cache : micro_distance_caches_)
-  {
-    micro_distance_cache.second.clear();
-  }
+  distance_cache_.clear();
+  micro_distance_cache_.clear();
+  // Ensure we are pointing to the latest costmap.
+  checkCostmap();
 }
 
-void Costmap3DQuery::updateMeshResource(const std::string& mesh_resource)
+void Costmap3DQuery::updateMeshResource(const std::string& mesh_resource, double padding)
 {
   footprint_mesh_resource_ = mesh_resource;
   std::string filename = getFileNameFromPackageURL(footprint_mesh_resource_);
@@ -98,12 +108,17 @@ void Costmap3DQuery::updateMeshResource(const std::string& mesh_resource)
   pcl::PointCloud<pcl::PointXYZ>::Ptr mesh_points(new pcl::PointCloud<pcl::PointXYZ>);
   pcl::fromPCLPointCloud2(mesh.cloud, *mesh_points);
 
-  // Convert the PCL PolygonMesh to the FCL BVHModel
+  // Convert the PCL PolygonMesh to the FCL BVHModel applying padding
   std::vector<fcl::Vector3<FCLFloat>> fcl_points;
   std::vector<fcl::Triangle> fcl_triangles;
   for (auto pcl_point : *mesh_points)
   {
-    fcl_points.push_back(fcl::Vector3<FCLFloat>(pcl_point.x, pcl_point.y, pcl_point.z));
+    // Apply padding very naively. To finely control padding, just use an alternate mesh
+    FCLFloat x = pcl_point.x > 0 ? pcl_point.x + padding : pcl_point.x - padding;
+    FCLFloat y = pcl_point.y > 0 ? pcl_point.y + padding : pcl_point.y - padding;
+    FCLFloat z = pcl_point.z > 0 ? pcl_point.z + padding : pcl_point.z - padding;
+
+    fcl_points.push_back(fcl::Vector3<FCLFloat>(x, y, z));
   }
   for (auto polygon : mesh.polygons)
   {
@@ -159,12 +174,14 @@ std::string Costmap3DQuery::getFileNameFromPackageURL(const std::string& url)
 
 double Costmap3DQuery::footprintCost(geometry_msgs::Pose pose)
 {
+  std::lock_guard<std::mutex> lock(query_mutex_);
   // TODO: implement as cost query. For now, just translate a collision to cost
   return footprintCollision(pose) ? -1.0 : 0.0
 }
 
 bool Costmap3DQuery::footprintCollision(geometry_msgs::Pose pose)
 {
+  std::lock_guard<std::mutex> lock(query_mutex_);
   assert(world_obj_);
   assert(robot_obj_);
 
@@ -181,6 +198,7 @@ bool Costmap3DQuery::footprintCollision(geometry_msgs::Pose pose)
 
 double Costmap3DQuery::footprintDistance(geometry_msgs::Pose pose)
 {
+  std::lock_guard<std::mutex> lock(query_mutex_);
   assert(world_obj_);
   assert(robot_obj_);
 
@@ -190,51 +208,29 @@ double Costmap3DQuery::footprintDistance(geometry_msgs::Pose pose)
   FCLFloat pose_distance = std::numeric_limits<FCLFloat>::max();
 //  FCLFloat pose_distance = 1.0;
 
-  DistanceCache* distance_cache_ptr;
-  DistanceCache* micro_distance_cache_ptr;
-  if (last_mesh_frame_.first == footprint_mesh_resource_
-      && last_mesh_frame_.second == "odom")
-  {
-    distance_cache_ptr = last_distance_cache_;
-    micro_distance_cache_ptr = last_micro_distance_cache_;
-  }
-  else
-  {
-    last_mesh_frame_ = std::make_pair(footprint_mesh_resource_, "odom");
-    distance_cache_ptr = &distance_caches_[last_mesh_frame_];
-    micro_distance_cache_ptr = &micro_distance_caches_[last_mesh_frame_];
-    last_distance_cache_ = distance_cache_ptr;
-    last_micro_distance_cache_ = micro_distance_cache_ptr;
-  }
-  DistanceCache& micro_distance_cache = *micro_distance_cache_ptr;
-  DistanceCache& distance_cache = *distance_cache_ptr;
-
   fcl::DistanceRequest<FCLFloat> request;
   fcl::DistanceResult<FCLFloat> result;
 
   DistanceCacheKey micro_cache_key(pose);
   // first bin for micro. if micro, just use the result directly.
   micro_cache_key.binPoseMicro();
-  auto micro_cache_entry = micro_distance_cache.find(micro_cache_key);
-  if (micro_cache_entry != micro_distance_cache.end())
+  auto micro_cache_entry = micro_distance_cache_.find(micro_cache_key);
+  if (micro_cache_entry != micro_distance_cache_.end())
   {
     return micro_cache_entry->second.distanceToNewPose(pose);
   }
 
   DistanceCacheKey cache_key(pose);
   cache_key.binPose();
-  auto cache_entry = distance_cache.find(cache_key);
-  if (cache_entry != distance_cache.end())
+  auto cache_entry = distance_cache_.find(cache_key);
+  if (cache_entry != distance_cache_.end())
   {
     pose_distance = cache_entry->second.distanceToNewPose(pose);
     cache_entry->second.setupResult(&result);
   }
-  else if(distance_cache.size() > 0)
+  else if(distance_cache_.size() > 0)
   {
-    // NOTE: we can't do this unless the collision check is on, as we may
-    // calculate a positive distance when the mesh is inside the map.
-    // just use the first thing in the cache, its better than nothing.
-    auto begin = distance_cache.begin();
+    auto begin = distance_cache_.begin();
     pose_distance = begin->second.distanceToNewPose(pose);
     begin->second.setupResult(&result);
   }
@@ -250,14 +246,15 @@ double Costmap3DQuery::footprintDistance(geometry_msgs::Pose pose)
 
   // Update distance caches
   const DistanceCacheEntry& new_entry = DistanceCacheEntry(result);
-  distance_cache[cache_key] = new_entry;
-  micro_distance_cache[micro_cache_key] = new_entry;
+  distance_cache_[cache_key] = new_entry;
+  micro_distance_cache_[micro_cache_key] = new_entry;
 
   return distance;
 }
 
 double Costmap3DQuery::footprintSignedDistance(geometry_msgs::Pose pose)
 {
+  std::lock_guard<std::mutex> lock(query_mutex_);
   // TODO: Figure out how to apply distance cache to signed distance.
   // TODO: Think about how to make this work w/ meshes representing a solid and octomaps
   assert(world_obj_);

@@ -103,6 +103,8 @@ Costmap3DROS::Costmap3DROS(std::string name, tf::TransformListener& tf) :
 
 Costmap3DROS::~Costmap3DROS()
 {
+  // Query objects must be deleted prior to the layered costmap
+  query_map_.clear();
   // Publisher must be freed before the 3D costmap
   publisher_.reset();
 }
@@ -230,27 +232,31 @@ void Costmap3DROS::clearAABB(geometry_msgs::Point min, geometry_msgs::Point max,
   }
 }
 
-const Costmap3DROS::QueryMap* Costmap3DROS::getQuery(const std::string& footprint_mesh_resource, double padding)
+std::shared_ptr<Costmap3DQuery> Costmap3DROS::getQuery(const std::string& footprint_mesh_resource, double padding)
 {
+  const std::string* query_mesh;
   if (footprint_mesh_resource == "")
   {
-    footprint_mesh_resource = footprint_mesh_resource_;
+    query_mesh = &footprint_mesh_resource_;
   }
-  if (!isfinite(padding))
+  else
+  {
+    query_mesh = &footprint_mesh_resource;
+  }
+  if (!std::isfinite(padding))
   {
     padding = footprint_3d_padding_;
   }
-  auto query_it = query_map_.find(std::make_pair(footprint_mesh_resource, padding));
+  auto query_pair = std::make_pair(*query_mesh, padding);
+  auto query_it = query_map_.find(query_pair);
   if (query_it == query_map_.end())
   {
     // Query object does not exist, create it and add it to the map
     std::shared_ptr<Costmap3DQuery> query;
-    query.reset(new Costmap3DQuery());
-    query->setCostmap(layered_costmap_3d_);
-    query->updateMeshResource(footprint_mesh_resource, padding);
-    query_it = query_map_.insert(std::make_pair(std::make_pair(footprint_mesh_resource, padding), query)).first;
+    query.reset(new Costmap3DQuery(layered_costmap_3d_, footprint_mesh_resource, padding));
+    query_it = query_map_.insert(std::make_pair(query_pair, query)).first;
   }
-  return &(*query_it);
+  return query_it->second;
 }
 
 double Costmap3DROS::footprintCost(geometry_msgs::Pose pose,

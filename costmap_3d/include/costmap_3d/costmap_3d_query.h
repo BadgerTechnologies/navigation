@@ -41,6 +41,7 @@
 #include <memory>
 #include <unordered_map>
 #include <limits>
+#include <mutex>
 #include <fcl/geometry/bvh/BVH_model.h>
 #include <fcl/geometry/shape/utility.h>
 #include <fcl/narrowphase/collision_object.h>
@@ -59,54 +60,64 @@ public:
   /**
    * @brief  Constructor for the query object
    */
-  Costmap3DQuery();
+  Costmap3DQuery(
+      const std::shared_ptr<LayeredCostmap3D>& layered_costmap_3d,
+      const std::string& mesh_resource,
+      double padding = 0.0);
   virtual ~Costmap3DQuery();
-
-  /** @brief Update the layered costmap to query from.
-   * Note: must be called anytime the Costmap3D is reallocated, such as when
-   * the resolution changes. */
-  virtual void setCostmap(const std::shared_ptr<LayeredCostmap3D>& layered_costmap_3d);
-
-  /** @brief Update the mesh to use for queries. */
-  void updateMeshResource(const std::string& mesh_resource, double padding = 0.0);
 
   /** @brief Get the cost to put the robot base at the given pose.
    *
-   * It is assumed the pose is in the frame of the costmap, and the current
-   * state of the costmap is queried at the given pose.
+   * It is assumed the pose is in the frame of the costmap.
    * return value represents the cost of the pose
-   * negative is collision, zero is free.
-   * The caller must be holding the lock on the associated costmap. */
+   * negative is collision, zero is free. */
   virtual double footprintCost(geometry_msgs::Pose pose);
 
   /** @brief Return whether the given pose is in collision.
    *
-   * The caller must be holding the lock on the associated costmap. */
+   * It is assumed the pose is in the frame of the costmap.
+   */
   virtual bool footprintCollision(geometry_msgs::Pose pose);
 
   /** @brief Return minimum distance to nearest costmap object.
+   *
+   * It is assumed the pose is in the frame of the costmap.
    * This returns the minimum unsigned distance. So a collision will return <0.0.
    * Negative values are not exact minimum distances. If exact minimum is
-   * required use footprintSignedDistance.
-   * The caller must be holding the lock on the associated costmap. */
+   * required use footprintSignedDistance. */
   virtual double footprintDistance(geometry_msgs::Pose pose);
 
   /** @brief Return minimum signed distance to nearest costmap object.
+   *
+   * It is assumed the pose is in the frame of the costmap.
    * This returns the minimum signed distance. So, the deeper a pose goes into
-   * obstacles, the more negative the return value becomes.
-   * The caller must be holding the lock on the associated costmap. */
+   * obstacles, the more negative the return value becomes. */
   virtual double footprintSignedDistance(geometry_msgs::Pose pose);
 
 protected:
   std::shared_ptr<LayeredCostmap3D> layered_costmap_3d_;
+
+  /** @brief Ensure query map matches currently active costmap.
+   * Note: must be called on every query to ensure that the correct Costmap3D is being queried.
+   * The LayeredCostmap3D can reallocate the Costmap3D, such as when
+   * the resolution changes.
+   * Note: assumes the query_mutex_ is held.
+   */
+  virtual void checkCostmap(const std::shared_ptr<LayeredCostmap3D>& layered_costmap_3d);
+
+  /** @brief Update the mesh to use for queries. */
+  virtual void updateMeshResource(const std::string& mesh_resource, double padding = 0.0);
+
 
   virtual void updateCompleteCallback(LayeredCostmap3D* layered_costmap_3d,
                                       const Costmap3D& delta,
                                       const Costmap3D& bounds_map);
 
 private:
+  std::mutex query_mutex_;
   std::string getFileNameFromPackageURL(const std::string& url);
   std::string footprint_mesh_resource_;
+  std::string costmap_update_complete_callback_id_;
 
   using FCLFloat = float;
   using FCLRobotModel = fcl::BVHModel<fcl::OBBRSS<FCLFloat>>;
@@ -117,6 +128,9 @@ private:
   using FCLCollisionObject = fcl::CollisionObject<FCLFloat>;
   using FCLCollisionObjectPtr = std::shared_ptr<FCLCollisionObject>;
   FCLCollisionObjectPtr robot_obj_;
+
+  std::shared_ptr<const octomap::OcTree> octree_ptr_;
+  std::shared_ptr<fcl::OcTree<FCLFloat>> fcl_octree_ptr_;
   FCLCollisionObjectPtr world_obj_;
   inline const FCLCollisionObjectPtr& getRobotCollisionObject(const geometry_msgs::Pose& pose)
   {
@@ -280,15 +294,8 @@ private:
 //    fcl::Transform3<FCLFloat> mesh_triangle_tf;
   };
   using DistanceCache = std::unordered_map<DistanceCacheKey, DistanceCacheEntry, DistanceCacheKeyHash, DistanceCacheKeyEqual>;
-  // Map a pair of strings for (mesh_id, frame_id) to the correct
-  // DistanceCache instance.
-  using DistanceCacheMap = std::map<std::pair<std::string, std::string>, DistanceCache>;
-  DistanceCacheMap distance_caches_;
-  DistanceCacheMap micro_distance_caches_;
-  std::pair<std::string, std::string> last_mesh_frame_;
-  DistanceCache* last_distance_cache_;
-  DistanceCache* last_micro_distance_cache_;
-
+  DistanceCache distance_cache_;
+  DistanceCache micro_distance_cache_;
 };
 // class Costmap3DROS
 }  // namespace costmap_3d

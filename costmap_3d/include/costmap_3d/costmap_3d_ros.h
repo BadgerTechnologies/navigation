@@ -230,7 +230,7 @@ private:
   using QueryMap = std::map<std::pair<std::string, double>, std::shared_ptr<Costmap3DQuery>>;
   QueryMap query_map_;
   // assumes costmap is locked
-  const QueryMap* getQuery(const std::string& footprint_mesh_resource, double padding);
+  std::shared_ptr<Costmap3DQuery> getQuery(const std::string& footprint_mesh_resource, double padding);
 
   std::string footprint_mesh_resource_;
   double footprint_3d_padding_;
