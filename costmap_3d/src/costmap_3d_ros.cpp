@@ -316,17 +316,14 @@ void Costmap3DROS::processPlanCost3D(RequestType& request, ResponseType& respons
   kill(getpid(), 12);
 #endif
 
-  // TODO: handle footprint_mesh_resource
-  // TODO: handle padding
-
   if (request.cost_query_mode == GetPlanCost3DService::Request::COST_QUERY_MODE_DISTANCE ||
       request.cost_query_mode == GetPlanCost3DService::Request::COST_QUERY_MODE_EXACT_SIGNED_DISTANCE)
   {
-    response.plan_cost = std::numeric_limits<double>::max();
+    response.cost = std::numeric_limits<double>::max();
   }
   else
   {
-    response.plan_cost = 0.0;
+    response.cost = 0.0;
   }
 
   response.pose_costs.reserve(request.poses.size());
@@ -344,7 +341,7 @@ void Costmap3DROS::processPlanCost3D(RequestType& request, ResponseType& respons
                                request.poses[i].header.frame_id);
     }
     double pose_cost;
-    if (request.cost_query_mode == GetPlanCost3DService::Request::COST_QUERY_MODE_COLLISON_ONLY)
+    if (request.cost_query_mode == GetPlanCost3DService::Request::COST_QUERY_MODE_COLLISION_ONLY)
     {
       pose_cost = footprintCollision(pose, request.footprint_mesh_resource, request.padding) ? -1.0 : 0.0;
     }
@@ -368,8 +365,8 @@ void Costmap3DROS::processPlanCost3D(RequestType& request, ResponseType& respons
     if (request.cost_query_mode == GetPlanCost3DService::Request::COST_QUERY_MODE_DISTANCE ||
         request.cost_query_mode == GetPlanCost3DService::Request::COST_QUERY_MODE_EXACT_SIGNED_DISTANCE)
     {
-      // in distance mode, the plan_cost is the minimum distance across all poses
-      response.plan_cost = std::min(response.plan_cost, pose_cost);
+      // in distance mode, the cost is the minimum distance across all poses
+      response.cost = std::min(response.cost, pose_cost);
     }
     else
     {
@@ -377,24 +374,24 @@ void Costmap3DROS::processPlanCost3D(RequestType& request, ResponseType& respons
       // or the aggregate non-lethal cost.
       if (collision)
       {
-        if (response.plan_cost >= 0.0)
+        if (response.cost >= 0.0)
         {
           // this pose is in collision, but the plan hasn't seen a collision yet.
-          // reset the plan_cost to this pose's cost
-          response.plan_cost = pose_cost;
+          // reset the cost to this pose's cost
+          response.cost = pose_cost;
         }
         else
         {
-          // otherwise, add the lethal pose_cost to the plan_cost (making it more negative)
-          response.plan_cost += pose_cost;
+          // otherwise, add the lethal pose_cost to the cost (making it more negative)
+          response.cost += pose_cost;
         }
       }
       else
       {
-        if (response.plan_cost >= 0.0)
+        if (response.cost >= 0.0)
         {
           // not in collision, plan not in collision, add the cost
-          response.plan_cost += pose_cost;
+          response.cost += pose_cost;
         }
         // don't add the non-lethal cost to a lethal plan
       }
@@ -403,11 +400,10 @@ void Costmap3DROS::processPlanCost3D(RequestType& request, ResponseType& respons
     if (collision)
     {
       response.lethal_indices.push_back(i);
-    }
-
-    if (request.lazy && response.in_collision)
-    {
-      break;
+      if (request.lazy)
+      {
+        break;
+      }
     }
   }
 

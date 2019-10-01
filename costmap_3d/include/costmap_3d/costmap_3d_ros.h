@@ -144,7 +144,7 @@ public:
    *
    * @returns negative for lethal, otherwise the cost of the pose */
   virtual double footprintCost(geometry_msgs::Pose pose,
-                               std::string footprint_mesh_resource = "",
+                               const std::string& footprint_mesh_resource = "",
                                double padding = NAN);
 
   /** @brief Return whether the given pose is in collision.
@@ -173,7 +173,7 @@ public:
    * 
    * @returns negative on collision, otherwise distance to nearest obstacle */
   virtual double footprintDistance(geometry_msgs::Pose pose,
-                                   std::string footprint_mesh_resource = "",
+                                   const std::string& footprint_mesh_resource = "",
                                    double padding = NAN);
 
   /** @brief Return minimum signed distance to nearest costmap object.
@@ -187,7 +187,7 @@ public:
    *
    * @returns exact signed distance to nearest obstacle */
   virtual double footprintSignedDistance(geometry_msgs::Pose pose,
-                                         std::string footprint_mesh_resource = "",
+                                         const std::string& footprint_mesh_resource = "",
                                          double padding = NAN);
 
 protected:

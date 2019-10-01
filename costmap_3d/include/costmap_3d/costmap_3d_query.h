@@ -103,7 +103,7 @@ protected:
    * the resolution changes.
    * Note: assumes the query_mutex_ is held.
    */
-  virtual void checkCostmap(const std::shared_ptr<LayeredCostmap3D>& layered_costmap_3d);
+  virtual void checkCostmap();
 
   /** @brief Update the mesh to use for queries. */
   virtual void updateMeshResource(const std::string& mesh_resource, double padding = 0.0);

@@ -49,12 +49,12 @@ namespace costmap_3d
 
 Costmap3DQuery::Costmap3DQuery(const std::shared_ptr<LayeredCostmap3D>& layered_costmap_3d,
     const std::string& mesh_resource,
-    double padding = 0.0)
+    double padding)
     : layered_costmap_3d_(layered_costmap_3d)
 {
   std::lock_guard<std::mutex> lock(query_mutex_);
   checkCostmap();
-  updateMeshRescource(mesh_resource, padding);
+  updateMeshResource(mesh_resource, padding);
   std::stringstream ss;
   ss << "costmap_3d_query_" << mesh_resource << "_" << padding;
   costmap_update_complete_callback_id_ = ss.str();
@@ -77,8 +77,8 @@ void Costmap3DQuery::checkCostmap()
   {
     // The octomap has been reallocated, change where we are pointing.
     octree_ptr_ = layered_costmap_3d_->getCostmap3D();
-    fcl_octree_ptr_.reset(new fcl::OcTree<FCLFloat>(octree_ptr));
-    world_obj_ = FCLCollisionObjectPtr(new fcl::CollisionObject<FCLFloat>(fcl_octree_ptr));
+    fcl_octree_ptr_.reset(new fcl::OcTree<FCLFloat>(octree_ptr_));
+    world_obj_ = FCLCollisionObjectPtr(new fcl::CollisionObject<FCLFloat>(fcl_octree_ptr_));
   }
 }
 
@@ -174,9 +174,8 @@ std::string Costmap3DQuery::getFileNameFromPackageURL(const std::string& url)
 
 double Costmap3DQuery::footprintCost(geometry_msgs::Pose pose)
 {
-  std::lock_guard<std::mutex> lock(query_mutex_);
   // TODO: implement as cost query. For now, just translate a collision to cost
-  return footprintCollision(pose) ? -1.0 : 0.0
+  return footprintCollision(pose) ? -1.0 : 0.0;
 }
 
 bool Costmap3DQuery::footprintCollision(geometry_msgs::Pose pose)
