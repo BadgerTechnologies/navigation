@@ -235,12 +235,13 @@ void Costmap3DROS::clearAABB(geometry_msgs::Point min, geometry_msgs::Point max,
 std::shared_ptr<Costmap3DQuery> Costmap3DROS::getQuery(const std::string& footprint_mesh_resource, double padding)
 {
   const std::string* query_mesh;
-  if (footprint_mesh_resource == "")
+  if (footprint_mesh_resource.empty())
   {
     query_mesh = &footprint_mesh_resource_;
   }
   else
   {
+    // TODO: need to verify that the file actually exists
     query_mesh = &footprint_mesh_resource;
   }
   if (!std::isfinite(padding))
@@ -253,7 +254,7 @@ std::shared_ptr<Costmap3DQuery> Costmap3DROS::getQuery(const std::string& footpr
   {
     // Query object does not exist, create it and add it to the map
     std::shared_ptr<Costmap3DQuery> query;
-    query.reset(new Costmap3DQuery(layered_costmap_3d_, footprint_mesh_resource, padding));
+    query.reset(new Costmap3DQuery(layered_costmap_3d_, *query_mesh, padding));
     query_it = query_map_.insert(std::make_pair(query_pair, query)).first;
   }
   return query_it->second;

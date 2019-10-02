@@ -40,14 +40,12 @@ if __name__ == "__main__":
     req.lazy = False
     req.header.frame_id = "odom"
     req.header.stamp = pose_array.header.stamp
-    req.collision_only = False
-    req.use_distance_for_cost = True
-    req.exact_signed_distance = False
+    req.cost_query_mode = costmap_3d.srv.GetPlanCost3DServiceRequest.COST_QUERY_MODE_DISTANCE
     req.footprint_mesh_resource = ""
     req.padding = float('nan')
 #    for i in range(0,35*4*5*8):
-#    for teb in range(0,4):
-    for teb in range(0,60*4):
+    for teb in range(0,4):
+#    for teb in range(0,60*4):
         pose = geometry_msgs.msg.PoseStamped()
         pose.header.frame_id = "base_footprint"
 #        pose.pose.position.x = random.uniform(-4.0, 4.0)

@@ -170,7 +170,7 @@ private:
   // Master 3D cost map.
   // Starts off NULL until our resolution is setup.
   Costmap3DPtr costmap_;
-  std::mutex costmap_mutex_;
+  std::recursive_mutex costmap_mutex_;
 
   // Pointer to our sibling 2D costmap.
   // We can use this to find our global frame.
