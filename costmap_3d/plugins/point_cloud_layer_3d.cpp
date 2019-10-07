@@ -59,9 +59,18 @@ void PointCloudLayer3D::initialize(LayeredCostmap3D* parent, std::string name, t
   pnh_ = ros::NodeHandle("~/" + name);
 
   cloud_topic_ = pnh_.param("cloud_topic", std::string("cloud"));
+  cloud_has_intensity_ = pnh_.param("cloud_has_intensity", false);
+  free_intensity_ = pnh_.param("free_intensity", 0.0);
+  lethal_intensity_ = pnh_.param("lethal_intensity", 1.0);
 
   ROS_INFO_STREAM("PointCloudLayer3D " << name << ": initializing");
   ROS_INFO_STREAM("  cloud_topic: " << cloud_topic_);
+  ROS_INFO_STREAM("  cloud_has_intensity: " << cloud_has_intensity_);
+  if (cloud_has_intensity_)
+  {
+    ROS_INFO_STREAM("  free_intensity: " << free_intensity_);
+    ROS_INFO_STREAM("  lethal_intensity: " << lethal_intensity_);
+  }
 
   dsrv_.reset(new dynamic_reconfigure::Server<costmap_3d::GenericPluginConfig>(pnh_));
   dsrv_->setCallback(std::bind(&PointCloudLayer3D::reconfigureCallback, this,
@@ -92,8 +101,18 @@ void PointCloudLayer3D::activate()
 void PointCloudLayer3D::subscribe()
 {
   std::lock_guard<Layer3D> lock(*this);
-  cloud_sub_ = pnh_.subscribe<PointCloud>(cloud_topic_, 1, std::bind(&PointCloudLayer3D::pointCloudCallback,
-                                                                     this, std::placeholders::_1));
+  if (cloud_has_intensity_)
+  {
+    cloud_sub_ = pnh_.subscribe<PointCloudWithIntensity>(
+        cloud_topic_, 1, std::bind(&PointCloudLayer3D::pointCloudCallback<PointCloudWithIntensity>,
+                                   this, std::placeholders::_1));
+  }
+  else
+  {
+    cloud_sub_ = pnh_.subscribe<PointCloud>(
+        cloud_topic_, 1, std::bind(&PointCloudLayer3D::pointCloudCallback<PointCloud>,
+                                   this, std::placeholders::_1));
+  }
 }
 
 void PointCloudLayer3D::unsubscribe()
@@ -102,7 +121,27 @@ void PointCloudLayer3D::unsubscribe()
   cloud_sub_.shutdown();
 }
 
-void PointCloudLayer3D::pointCloudCallback(const PointCloud::ConstPtr& cloud_msg)
+template <typename PointType>
+Cost PointCloudLayer3D::pointIntensityToCost(PointType point)
+{
+  // default is all points are lethal
+  return LETHAL;
+}
+
+template <>
+Cost PointCloudLayer3D::pointIntensityToCost<pcl::PointXYZI>(pcl::PointXYZI point)
+{
+  const float intensity = point.intensity;
+  if (intensity >= lethal_intensity_)
+    return LETHAL;
+  if (intensity <= free_intensity_)
+    return FREE;
+  // Linearly interpolate the intensity value to the space between LETHAL and FREE
+  return ((intensity - free_intensity_) / (lethal_intensity_ - free_intensity_)) * (LETHAL - FREE) + FREE;
+}
+
+template <typename CloudType>
+void PointCloudLayer3D::pointCloudCallback(const typename CloudType::ConstPtr& cloud_msg)
 {
   // Find the global frame transform.
   ros::Time stamp(pcl_conversions::fromPCL(cloud_msg->header.stamp));
@@ -121,37 +160,54 @@ void PointCloudLayer3D::pointCloudCallback(const PointCloud::ConstPtr& cloud_msg
   }
   Eigen::Affine3d global_frame_transform_eigen;
   tf::transformTFToEigen(global_frame_transform, global_frame_transform_eigen);
-  PointCloud::Ptr cloud_ptr(new PointCloud());
+  typename CloudType::Ptr cloud_ptr(new CloudType());
   pcl::transformPointCloud(*cloud_msg, *cloud_ptr, global_frame_transform_eigen);
 
   std::lock_guard<Layer3D> lock(*this);
   if (costmap_)
   {
     Costmap3D new_cells(costmap_->getResolution());
-    Costmap3D unchanged_cells(costmap_->getResolution());
     for (auto pt : cloud_msg->points)
     {
+      Cost pt_cost = pointIntensityToCost(pt);
       geometry_msgs::Point point;
       point.x = pt.x;
       point.y = pt.y;
       point.z = pt.z;
       Costmap3DIndex key;
-      if (costmap_->coordToKeyChecked(toOctomapPoint(point), key))
+      if (new_cells.coordToKeyChecked(toOctomapPoint(point), key))
       {
-        Costmap3D::NodeType* node = costmap_->search(key);
-        if (!node)
+        Costmap3D::NodeType* node = new_cells.search(key);
+        // Only set the maximum cost for a given key across the cloud
+        if (!node || node->getValue() < pt_cost)
         {
-          new_cells.setNodeValue(key, LETHAL);
-        }
-        else
-        {
-          unchanged_cells.setNodeValue(key, LETHAL);
+          new_cells.setNodeValue(key, pt_cost);
         }
       }
     }
+
+    // Copy the old costmap state into erase cells
     Costmap3D erase_cells(*costmap_);
-    // Remove the unchanged cells from the erase cells
-    erase_cells.setTreeValues(NULL, &unchanged_cells, false, true);
+    // Delete any cells from erase_cells that are in the new cloud.
+    erase_cells.setTreeValues(NULL, &new_cells, false, true);
+
+    // Add any cells in new_cells to unchanged_cells that match our current costmap state.
+    Costmap3D unchanged_cells(costmap_->getResolution());
+    for(Costmap3D::leaf_iterator it=new_cells.begin_leafs(), end=new_cells.end_leafs(); it != end; ++it)
+    {
+      const Costmap3DIndex key(it.getKey());
+      const Cost new_cost = it->getValue();
+      const Costmap3D::NodeType* const old_node = costmap_->search(key);
+      if (old_node && new_cost == old_node->getValue())
+      {
+	unchanged_cells.setNodeValue(key, new_cost);
+      }
+    }
+
+    // Remove the unchanged cells from the new cells to avoid over-touching the costmap
+    new_cells.setTreeValues(NULL, &unchanged_cells, false, true);
+
+    // Make the changes
     eraseCells(erase_cells);
     markAndClearCells(new_cells);
   }
