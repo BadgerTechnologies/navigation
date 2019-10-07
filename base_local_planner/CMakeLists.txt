@@ -14,6 +14,7 @@ find_package(catkin REQUIRED
             pcl_conversions
             rostest
             costmap_2d
+            costmap_3d
             pluginlib
             angles
         )
@@ -65,6 +66,7 @@ catkin_package(
         tf
         pluginlib
         costmap_2d
+        costmap_3d
         nav_core
         angles
 )
@@ -90,6 +92,7 @@ add_library(base_local_planner
 	src/prefer_forward_cost_function.cpp
 	src/point_grid.cpp
 	src/costmap_model.cpp
+	src/costmap_3d_model.cpp
 	src/simple_scored_sampling_planner.cpp
 	src/simple_trajectory_generator.cpp
 	src/trajectory.cpp

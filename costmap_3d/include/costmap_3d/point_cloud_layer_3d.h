@@ -56,6 +56,7 @@ class PointCloudLayer3D : public CostmapLayer3D
 {
   using super = CostmapLayer3D;
   using PointCloud = pcl::PointCloud<pcl::PointXYZ>;
+  using PointCloudWithIntensity = pcl::PointCloud<pcl::PointXYZI>;
 public:
   PointCloudLayer3D();
   virtual ~PointCloudLayer3D();
@@ -70,7 +71,11 @@ public:
   virtual void activate();
 
 protected:
-  virtual void pointCloudCallback(const PointCloud::ConstPtr& cloud_msg);
+  template <typename PointType>
+  Cost pointIntensityToCost(PointType point);
+
+  template <typename CloudType>
+  void pointCloudCallback(const typename CloudType::ConstPtr& cloud_msg);
 
   virtual void reconfigureCallback(costmap_3d::GenericPluginConfig &config, uint32_t level);
 
@@ -81,6 +86,12 @@ protected:
   std::shared_ptr<dynamic_reconfigure::Server<costmap_3d::GenericPluginConfig>> dsrv_;
   std::string cloud_topic_;
   ros::Subscriber cloud_sub_;
+  bool cloud_has_intensity_;
+  // Intensity values at or below free_intensity_ are considred free.
+  // Intensity values at or above lethal_intensity_ value are considered lethal.
+  // Intensity values between free_intensity_ and lethal_intesnity_ are linearly interpolated.
+  float free_intensity_;
+  float lethal_intensity_;
 };
 
 }  // namespace costmap_3d
