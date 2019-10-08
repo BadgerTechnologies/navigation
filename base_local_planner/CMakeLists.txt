@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 2.8.3)
 project(base_local_planner)
 
+set(CMAKE_CXX_STANDARD 11)
+
 find_package(catkin REQUIRED
         COMPONENTS
             cmake_modules
