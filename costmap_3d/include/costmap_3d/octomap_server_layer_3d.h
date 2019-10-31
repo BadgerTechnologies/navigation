@@ -71,7 +71,7 @@ public:
 
 protected:
   /** @brief Forward the bound box reset to the octomap server as well. */
-  virtual void resetAABBUnlocked(Costmap3DIndex min, Costmap3DIndex max);
+  virtual void resetBoundingBoxUnlocked(Costmap3DIndex min, Costmap3DIndex max);
 
   virtual void mapCallback(const octomap_msgs::OctomapConstPtr& map_msg);
   virtual void mapUpdateCallback(const octomap_msgs::OctomapUpdateConstPtr& map_update_msg);

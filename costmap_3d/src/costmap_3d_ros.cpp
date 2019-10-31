@@ -225,9 +225,9 @@ std::set<std::string> Costmap3DROS::getLayerNames()
   return plugin_names;
 }
 
-void Costmap3DROS::resetAABB(geometry_msgs::Point min, geometry_msgs::Point max, const std::set<std::string>& layers)
+void Costmap3DROS::resetBoundingBox(geometry_msgs::Point min, geometry_msgs::Point max, const std::set<std::string>& layers)
 {
-  super::resetAABB(min, max, layers);
+  super::resetBoundingBox(min, max, layers);
 
   std::lock_guard<LayeredCostmap3D> lock(*layered_costmap_3d_);
 
@@ -239,7 +239,7 @@ void Costmap3DROS::resetAABB(geometry_msgs::Point min, geometry_msgs::Point max,
     // them by name.
     if (layers.find(plugin->getName()) != layers.end())
     {
-      plugin->resetAABB(min, max);
+      plugin->resetBoundingBox(min, max);
     }
   }
 }

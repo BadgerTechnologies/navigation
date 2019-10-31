@@ -120,11 +120,11 @@ public:
   /** @brief Get the names of the layers (both 2D and 3D) in the costmap. */
   virtual std::set<std::string> getLayerNames();
 
-  // Be sure to have all versions of resetAABB from parent referencable
-  using super::resetAABB;
+  // Be sure to have all versions of resetBoundingBox from parent referencable
+  using super::resetBoundingBox;
 
   /** @brief Reset the costmap within the given axis-aligned bounding box in world coordinates for the given layers. */
-  virtual void resetAABB(geometry_msgs::Point min, geometry_msgs::Point max, const std::set<std::string>& layers);
+  virtual void resetBoundingBox(geometry_msgs::Point min, geometry_msgs::Point max, const std::set<std::string>& layers);
 
   /** @brief Get the cost to put the robot base at the given pose in the 3D costmap.
    *

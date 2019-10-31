@@ -73,7 +73,7 @@ bool eraseBBoxService(octomap_msgs::BoundingBoxQueryRequest& req, octomap_msgs::
 {
   if (g_costmap_ptr)
   {
-    g_costmap_ptr->resetAABB(req.min, req.max);
+    g_costmap_ptr->resetBoundingBox(req.min, req.max);
   }
   return true;
 }

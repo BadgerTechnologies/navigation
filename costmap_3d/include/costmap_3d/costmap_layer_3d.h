@@ -114,14 +114,14 @@ public:
    * For plugins which have no persistent memory of their own but make use of
    * the costmap_, there is no need to override this method.
    */
-  virtual void resetAABB(Costmap3DIndex min, Costmap3DIndex max);
+  virtual void resetBoundingBox(Costmap3DIndex min, Costmap3DIndex max);
 
-  virtual void resetAABB(geometry_msgs::Point min_point, geometry_msgs::Point max_point);
+  virtual void resetBoundingBox(geometry_msgs::Point min_point, geometry_msgs::Point max_point);
 
   virtual void matchSize(const geometry_msgs::Point& min, const geometry_msgs::Point& max, double resolution);
 
 protected:
-  virtual void resetAABBUnlocked(Costmap3DIndex min, Costmap3DIndex max);
+  virtual void resetBoundingBoxUnlocked(Costmap3DIndex min, Costmap3DIndex max);
 
   /** @brief Touch all the cells present in the given OcTree.
    * This layer must be holding the lock to make this call. */
