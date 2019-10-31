@@ -102,7 +102,7 @@ public:
   virtual void reset() = 0;
 
   /** @brief Forget old sensor data within the given axis-aligned bounding box. */
-  virtual void resetAABB(geometry_msgs::Point min_point, geometry_msgs::Point max_point) = 0;
+  virtual void resetBoundingBox(geometry_msgs::Point min_point, geometry_msgs::Point max_point) = 0;
 
   /**
    * @brief Check to make sure all the data in the layer is up to date.

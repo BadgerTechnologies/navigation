@@ -184,9 +184,9 @@ void OctomapServerLayer3D::reset()
   }
 }
 
-void OctomapServerLayer3D::resetAABBUnlocked(Costmap3DIndex min, Costmap3DIndex max)
+void OctomapServerLayer3D::resetBoundingBoxUnlocked(Costmap3DIndex min, Costmap3DIndex max)
 {
-  super::resetAABBUnlocked(min, max);
+  super::resetBoundingBoxUnlocked(min, max);
 
   if (erase_bbx_srv_.exists())
   {

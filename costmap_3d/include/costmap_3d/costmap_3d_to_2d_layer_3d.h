@@ -66,7 +66,7 @@ public:
   virtual void deactivate();
   virtual void activate();
   virtual void reset() {}
-  virtual void resetAABB(geometry_msgs::Point min_point, geometry_msgs::Point max_point) {}
+  virtual void resetBoundingBox(geometry_msgs::Point min_point, geometry_msgs::Point max_point) {}
   virtual bool isCurrent() const {return true;}
   virtual void matchSize(const geometry_msgs::Point& min, const geometry_msgs::Point& max, double resolution) {}
 };

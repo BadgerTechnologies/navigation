@@ -134,16 +134,16 @@ void CostmapLayer3D::reset()
   }
 }
 
-void CostmapLayer3D::resetAABB(Costmap3DIndex min, Costmap3DIndex max)
+void CostmapLayer3D::resetBoundingBox(Costmap3DIndex min, Costmap3DIndex max)
 {
   std::lock_guard<Layer3D> lock(*this);
   if (costmap_ && changed_cells_)
   {
-    resetAABBUnlocked(min, max);
+    resetBoundingBoxUnlocked(min, max);
   }
 };
 
-void CostmapLayer3D::resetAABB(geometry_msgs::Point min_point, geometry_msgs::Point max_point)
+void CostmapLayer3D::resetBoundingBox(geometry_msgs::Point min_point, geometry_msgs::Point max_point)
 {
   std::lock_guard<Layer3D> lock(*this);
   if (costmap_ && changed_cells_)
@@ -151,7 +151,7 @@ void CostmapLayer3D::resetAABB(geometry_msgs::Point min_point, geometry_msgs::Po
     Costmap3DIndex min_key, max_key;
     costmap_->coordToKeyClamped(toOctomapPoint(min_point), min_key);
     costmap_->coordToKeyClamped(toOctomapPoint(max_point), max_key);
-    resetAABBUnlocked(min_key, max_key);
+    resetBoundingBoxUnlocked(min_key, max_key);
   }
 }
 
@@ -167,7 +167,7 @@ void CostmapLayer3D::matchSize(const geometry_msgs::Point& min, const geometry_m
   // OctomapServer, they could be set here
 }
 
-void CostmapLayer3D::resetAABBUnlocked(Costmap3DIndex min, Costmap3DIndex max)
+void CostmapLayer3D::resetBoundingBoxUnlocked(Costmap3DIndex min, Costmap3DIndex max)
 {
   // Delete the AABB from the tree, and add any deleted leafs to the changed cells.
   costmap_->deleteAABB(min, max, false,
