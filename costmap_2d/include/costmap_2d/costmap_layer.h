@@ -73,7 +73,7 @@ public:
   /**
    * Reset an axis-aligned bounding box in world coordinates.
    */
-  void resetAABB(geometry_msgs::Point min, geometry_msgs::Point max);
+  void resetBoundingBox(geometry_msgs::Point min, geometry_msgs::Point max);
 
 protected:
   /*
