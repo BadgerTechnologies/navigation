@@ -158,7 +158,6 @@ private:
   FCLCollisionObjectPtr robot_obj_;
 
   std::shared_ptr<const octomap::OcTree> octree_ptr_;
-  std::shared_ptr<fcl::OcTree<FCLFloat>> fcl_octree_ptr_;
   FCLCollisionObjectPtr world_obj_;
   inline const FCLCollisionObjectPtr& getRobotCollisionObject(const geometry_msgs::Pose& pose)
   {
