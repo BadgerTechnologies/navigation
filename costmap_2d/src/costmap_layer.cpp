@@ -27,7 +27,7 @@ void CostmapLayer::addExtraBounds(double mx0, double my0, double mx1, double my1
     has_extra_bounds_ = true;
 }
 
-void CostmapLayer::resetAABB(geometry_msgs::Point min, geometry_msgs::Point max)
+void CostmapLayer::resetBoundingBox(geometry_msgs::Point min, geometry_msgs::Point max)
 {
   boost::unique_lock<costmap_2d::Costmap2D::mutex_t> lock(*(getMutex()));
 

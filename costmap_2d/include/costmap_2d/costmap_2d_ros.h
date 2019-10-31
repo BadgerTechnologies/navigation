@@ -256,10 +256,10 @@ public:
   virtual std::set<std::string> getLayerNames();
 
   /** @brief Reset the costmap within the given axis-aligned bounding box in world coordinates across all layers. */
-  virtual void resetAABB(geometry_msgs::Point min, geometry_msgs::Point max);
+  virtual void resetBoundingBox(geometry_msgs::Point min, geometry_msgs::Point max);
 
   /** @brief Reset the costmap within the given axis-aligned bounding box in world coordinates for the given layers. */
-  virtual void resetAABB(geometry_msgs::Point min, geometry_msgs::Point max, const std::set<std::string>& layers);
+  virtual void resetBoundingBox(geometry_msgs::Point min, geometry_msgs::Point max, const std::set<std::string>& layers);
 
 protected:
   LayeredCostmap* layered_costmap_;

@@ -567,13 +567,13 @@ std::set<std::string> Costmap2DROS::getLayerNames()
   return rv;
 }
 
-void Costmap2DROS::resetAABB(geometry_msgs::Point min, geometry_msgs::Point max)
+void Costmap2DROS::resetBoundingBox(geometry_msgs::Point min, geometry_msgs::Point max)
 {
   // No need to reset the master map, as the next update will pull in the changes to each layer.
-  resetAABB(min, max, getLayerNames());
+  resetBoundingBox(min, max, getLayerNames());
 }
 
-void Costmap2DROS::resetAABB(geometry_msgs::Point min, geometry_msgs::Point max, const std::set<std::string>& layers)
+void Costmap2DROS::resetBoundingBox(geometry_msgs::Point min, geometry_msgs::Point max, const std::set<std::string>& layers)
 {
   boost::lock_guard<Costmap2DROS> lock(*this);
 
@@ -586,7 +586,7 @@ void Costmap2DROS::resetAABB(geometry_msgs::Point min, geometry_msgs::Point max,
       boost::shared_ptr<CostmapLayer> costmap_layer(boost::dynamic_pointer_cast<CostmapLayer>((*plugin)));
       if (costmap_layer)
       {
-        costmap_layer->resetAABB(min, max);
+        costmap_layer->resetBoundingBox(min, max);
       }
       else
       {
