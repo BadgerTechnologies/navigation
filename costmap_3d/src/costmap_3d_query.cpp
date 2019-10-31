@@ -65,20 +65,29 @@ Costmap3DQuery::Costmap3DQuery(const Costmap3DConstPtr& costmap_3d,
   // couple millseconds and is better than leaving the costmap locked for
   // an entire planning cycle.
   octree_ptr_.reset(new Costmap3D(*costmap_3d));
-  fcl_octree_ptr_.reset(new fcl::OcTree<FCLFloat>(octree_ptr_));
-  world_obj_ = FCLCollisionObjectPtr(new fcl::CollisionObject<FCLFloat>(fcl_octree_ptr_));
+  std::shared_ptr<fcl::OcTree<FCLFloat>> fcl_octree_ptr;
+  fcl_octree_ptr.reset(new fcl::OcTree<FCLFloat>(octree_ptr_));
+  world_obj_ = FCLCollisionObjectPtr(new fcl::CollisionObject<FCLFloat>(fcl_octree_ptr));
   updateMeshResource(mesh_resource, padding);
 }
 
+// Be sure to deep-copy any object with state that we modify.
 Costmap3DQuery::Costmap3DQuery(const Costmap3DQuery& rhs)
-  :  robot_model_(rhs.robot_model_),
-     octree_ptr_(rhs.octree_ptr_),
-     fcl_octree_ptr_(rhs.fcl_octree_ptr_),
-     world_obj_(rhs.world_obj_)
-     // Do NOT copy our caches as we do not want to pay to synchrnoize.
-     // The whole point of this copy constructor is so multiple planning
-     // threads could be querying the same octomap with separate caches in
-     // order to not need locks.
+  : // Share a pointer to the layered_costmap_3d_
+    layered_costmap_3d_(rhs.layered_costmap_3d_),
+    // Share a pointer to the robot model
+    robot_model_(rhs.robot_model_),
+    // Create a new robot_obj_, as we need to modify the transform.
+    robot_obj_(new FCLCollisionObject(robot_model_)),
+    // Share a pointer to the octree (if there was one)
+    octree_ptr_(rhs.octree_ptr_),
+    // Start out sharing a pointer to the world object.
+    // (We may make our own if the layered_costmap_3d_'s costmap is re-created)
+    world_obj_(rhs.world_obj_)
+    // Do NOT copy our caches as we do not synchrnoize.
+    // The whole point of this copy constructor is so multiple planning
+    // threads could be querying the same octomap with separate caches in
+    // order to avoid locking.
 {
 }
 
@@ -94,8 +103,9 @@ void Costmap3DQuery::checkCostmap()
     {
       // The octomap has been reallocated, change where we are pointing.
       octree_ptr_ = layered_costmap_3d_->getCostmap3D();
-      fcl_octree_ptr_.reset(new fcl::OcTree<FCLFloat>(octree_ptr_));
-      world_obj_ = FCLCollisionObjectPtr(new fcl::CollisionObject<FCLFloat>(fcl_octree_ptr_));
+      std::shared_ptr<fcl::OcTree<FCLFloat>> fcl_octree_ptr;
+      fcl_octree_ptr.reset(new fcl::OcTree<FCLFloat>(octree_ptr_));
+      world_obj_ = FCLCollisionObjectPtr(new fcl::CollisionObject<FCLFloat>(fcl_octree_ptr));
     }
     // The costmap has been updated since the last query, reset our caches
     if (last_layered_costmap_update_number_ != layered_costmap_3d_->getNumberOfUpdates())
