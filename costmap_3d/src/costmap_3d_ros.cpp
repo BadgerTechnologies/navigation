@@ -45,6 +45,7 @@
 #include <costmap_3d/costmap_3d_ros.h>
 #include <costmap_3d/layered_costmap_3d.h>
 #include <tf/transform_datatypes.h>
+#include <visualization_msgs/Marker.h>
 
 namespace costmap_3d
 {
@@ -81,6 +82,8 @@ Costmap3DROS::Costmap3DROS(std::string name, tf::TransformListener& tf) :
   }
 
   publisher_.reset(new Costmap3DPublisher(private_nh, layered_costmap_3d_.get(), "costmap_3d"));
+
+  footprint_pub_ = private_nh.advertise<visualization_msgs::Marker>("footprint_3d", 1, true);
 
   dsrv_.reset(new dynamic_reconfigure::Server<Costmap3DConfig>(ros::NodeHandle("~/" + name + "/costmap_3d")));
   dynamic_reconfigure::Server<Costmap3DConfig>::CallbackType cb = std::bind(&Costmap3DROS::reconfigureCB,
@@ -137,6 +140,8 @@ void Costmap3DROS::reconfigureCB(Costmap3DConfig &config, uint32_t level)
   layered_costmap_3d_->setResolution();
 
   footprint_3d_padding_ = config.footprint_3d_padding;
+
+  publishFootprint();
 }
 
 void Costmap3DROS::updateMap()
@@ -256,6 +261,33 @@ double Costmap3DROS::getFootprintPadding(double alt_padding)
     return footprint_3d_padding_;
   }
   return alt_padding;
+}
+
+void Costmap3DROS::publishFootprint()
+{
+  // TODO: publish a footprint with the padding applied
+  visualization_msgs::Marker marker;
+  marker.header.frame_id = getBaseFrameID();
+  marker.header.stamp = ros::Time();
+  marker.type = visualization_msgs::Marker::MESH_RESOURCE;
+  marker.action = visualization_msgs::Marker::ADD;
+  marker.pose.position.x = 0.0;
+  marker.pose.position.y = 0.0;
+  marker.pose.position.z = 0.0;
+  marker.pose.orientation.x = 0.0;
+  marker.pose.orientation.y = 0.0;
+  marker.pose.orientation.z = 0.0;
+  marker.pose.orientation.w = 1.0;
+  marker.scale.x = 1;
+  marker.scale.y = 1;
+  marker.scale.z = 1;
+  marker.color.a = 0.5;
+  marker.color.r = 0.5;
+  marker.color.g = 0.5;
+  marker.color.b = 0.5;
+  marker.frame_locked = true;
+  marker.mesh_resource = footprint_mesh_resource_;
+  footprint_pub_.publish(marker);
 }
 
 std::shared_ptr<Costmap3DQuery> Costmap3DROS::getQuery(const std::string& footprint_mesh_resource, double padding)

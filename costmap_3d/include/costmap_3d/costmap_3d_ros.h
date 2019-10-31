@@ -217,6 +217,7 @@ private:
   void reconfigureCB(costmap_3d::Costmap3DConfig &config, uint32_t level);
   pluginlib::ClassLoader<Layer3D> plugin_loader_;
   std::shared_ptr<Costmap3DPublisher> publisher_;
+  ros::Publisher footprint_pub_;
   std::shared_ptr<dynamic_reconfigure::Server<costmap_3d::Costmap3DConfig>> dsrv_;
   std::shared_ptr<actionlib::SimpleActionServer<GetPlanCost3DAction>> get_plan_cost_action_srv_;
   ros::ServiceServer get_plan_cost_srv_;
@@ -248,6 +249,7 @@ private:
   double getFootprintPadding(double alt_padding);
   // assumes costmap is locked
   std::shared_ptr<Costmap3DQuery> getQuery(const std::string& footprint_mesh_resource, double padding);
+  void publishFootprint();
 
   std::string footprint_mesh_resource_;
   double footprint_3d_padding_;
