@@ -120,7 +120,7 @@ void ClearCostmapRecovery::clear(costmap_2d::Costmap2DROS* costmap){
   max.y = y + reset_distance_ / 2;
   max.z = std::numeric_limits<double>::max();
 
-  costmap->resetAABB(min, max, clearable_layers_);
+  costmap->resetBoundingBox(min, max, clearable_layers_);
 }
 
 };
