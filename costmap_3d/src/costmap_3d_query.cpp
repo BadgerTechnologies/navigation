@@ -48,15 +48,31 @@ namespace costmap_3d
 
 Costmap3DQuery::Costmap3DQuery(const std::shared_ptr<LayeredCostmap3D>& layered_costmap_3d,
     const std::string& mesh_resource,
-    double padding)
-    : layered_costmap_3d_(layered_costmap_3d)
+    double padding,
+    unsigned int pose_bins_per_meter,
+    unsigned int pose_bins_per_radian,
+    unsigned int pose_micro_bins_per_meter,
+    unsigned int pose_micro_bins_per_radian)
+  : layered_costmap_3d_(layered_costmap_3d),
+    pose_bins_per_meter_(pose_bins_per_meter),
+    pose_bins_per_radian_(pose_bins_per_radian),
+    pose_micro_bins_per_meter_(pose_micro_bins_per_meter),
+    pose_micro_bins_per_radian_(pose_micro_bins_per_radian)
 {
   updateMeshResource(mesh_resource, padding);
 }
 
 Costmap3DQuery::Costmap3DQuery(const Costmap3DConstPtr& costmap_3d,
     const std::string& mesh_resource,
-    double padding)
+    double padding,
+    unsigned int pose_bins_per_meter,
+    unsigned int pose_bins_per_radian,
+    unsigned int pose_micro_bins_per_meter,
+    unsigned int pose_micro_bins_per_radian)
+  : pose_bins_per_meter_(pose_bins_per_meter),
+    pose_bins_per_radian_(pose_bins_per_radian),
+    pose_micro_bins_per_meter_(pose_micro_bins_per_meter),
+    pose_micro_bins_per_radian_(pose_micro_bins_per_radian)
 {
   // Make a local copy of the costmap in question
   // It would be awesome if the Costmap3D had a way to snapshot
@@ -75,6 +91,11 @@ Costmap3DQuery::Costmap3DQuery(const Costmap3DConstPtr& costmap_3d,
 Costmap3DQuery::Costmap3DQuery(const Costmap3DQuery& rhs)
   : // Share a pointer to the layered_costmap_3d_
     layered_costmap_3d_(rhs.layered_costmap_3d_),
+    // Copy the pose-bin constants
+    pose_bins_per_meter_(rhs.pose_bins_per_meter_),
+    pose_bins_per_radian_(rhs.pose_bins_per_radian_),
+    pose_micro_bins_per_meter_(rhs.pose_micro_bins_per_meter_),
+    pose_micro_bins_per_radian_(rhs.pose_micro_bins_per_radian_),
     // Share a pointer to the robot model
     robot_model_(rhs.robot_model_),
     // Create a new robot_obj_, as we need to modify the transform.
@@ -233,17 +254,15 @@ double Costmap3DQuery::footprintDistance(geometry_msgs::Pose pose)
   fcl::DistanceRequest<FCLFloat> request;
   fcl::DistanceResult<FCLFloat> result;
 
-  DistanceCacheKey micro_cache_key(pose);
-  // first bin for micro. if micro, just use the result directly.
-  micro_cache_key.binPoseMicro();
+  DistanceCacheKey micro_cache_key(pose, pose_micro_bins_per_meter_, pose_micro_bins_per_radian_);
+  // if we hit the micro cache, use the result directly.
   auto micro_cache_entry = micro_distance_cache_.find(micro_cache_key);
   if (micro_cache_entry != micro_distance_cache_.end())
   {
     return micro_cache_entry->second.distanceToNewPose(pose);
   }
 
-  DistanceCacheKey cache_key(pose);
-  cache_key.binPose();
+  DistanceCacheKey cache_key(pose, pose_bins_per_meter_, pose_bins_per_radian_);
   auto cache_entry = distance_cache_.find(cache_key);
   if (cache_entry != distance_cache_.end())
   {
