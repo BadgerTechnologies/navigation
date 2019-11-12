@@ -152,4 +152,4 @@ protected:
 
 }  // namespace costmap_3d
 
-#endif  // COSTMAP_3D_COSTMAP_LAYER_3D_H_
+#endif  // COSTMAP_3D_LAYER_3D_H_

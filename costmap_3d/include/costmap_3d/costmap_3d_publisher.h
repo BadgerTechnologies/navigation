@@ -74,4 +74,4 @@ private:
 
 }  // namespace costmap_3d
 
-#endif  // COSTMAP_3D_COSTMAP_3D_PUBLISHER_H
+#endif  // COSTMAP_3D_COSTMAP_3D_PUBLISHER_H_
