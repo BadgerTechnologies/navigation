@@ -143,7 +143,6 @@ void Costmap3DTo2DLayer::updateBounds(double robot_x, double robot_y, double rob
       assert(max_map_y >= 0);
       assert(max_map_y < (signed)size_y_);
       for (int row = min_map_y; row <= max_map_y; ++row)
-      for (int row = min_map_y; row <= max_map_y; ++row)
       {
         const int row_len = (max_map_x - min_map_x) + 1;
         const int row_step = size_x_;
