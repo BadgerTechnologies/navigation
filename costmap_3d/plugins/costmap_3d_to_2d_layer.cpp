@@ -46,14 +46,12 @@ namespace costmap_3d
 {
 
 Costmap3DTo2DLayer::Costmap3DTo2DLayer()
-    : dsrv_(NULL), copy_full_map_(true)
+    : copy_full_map_(true)
 {
 }
 
 Costmap3DTo2DLayer::~Costmap3DTo2DLayer()
 {
-  if (dsrv_)
-    delete dsrv_;
 }
 
 void Costmap3DTo2DLayer::onInitialize()
@@ -64,15 +62,9 @@ void Costmap3DTo2DLayer::onInitialize()
 
   reset();
 
-  if (dsrv_)
-  {
-    delete dsrv_;
-  }
-
-  dsrv_ = new dynamic_reconfigure::Server<costmap_3d::GenericPluginConfig>(nh);
-  dynamic_reconfigure::Server<costmap_3d::GenericPluginConfig>::CallbackType cb = boost::bind(
-      &Costmap3DTo2DLayer::reconfigureCB, this, _1, _2);
-  dsrv_->setCallback(cb);
+  dsrv_.reset(new dynamic_reconfigure::Server<costmap_3d::GenericPluginConfig>(nh));
+  dsrv_->setCallback(std::bind(&Costmap3DTo2DLayer::reconfigureCB, this,
+                               std::placeholders::_1, std::placeholders::_2));
 }
 
 void Costmap3DTo2DLayer::reconfigureCB(costmap_3d::GenericPluginConfig &config, uint32_t level)

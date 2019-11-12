@@ -37,6 +37,7 @@
 #ifndef COSTMAP_3D_COSTMAP_3D_TO_2D_LAYER_H_
 #define COSTMAP_3D_COSTMAP_3D_TO_2D_LAYER_H_
 
+#include <memory>
 #include <unordered_map>
 #include <ros/ros.h>
 #include <costmap_2d/costmap_layer.h>
@@ -71,7 +72,7 @@ public:
 protected:
   unsigned char toCostmap2D(Cost value) const;
   void reconfigureCB(costmap_3d::GenericPluginConfig &config, uint32_t level);
-  dynamic_reconfigure::Server<costmap_3d::GenericPluginConfig> *dsrv_;
+  std::shared_ptr<dynamic_reconfigure::Server<costmap_3d::GenericPluginConfig>> dsrv_;
   bool use_maximum_;
   bool copy_full_map_;
   LayeredCostmap3D* layered_costmap_3d_;
