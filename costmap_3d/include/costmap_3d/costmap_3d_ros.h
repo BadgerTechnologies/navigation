@@ -258,4 +258,4 @@ private:
 // class Costmap3DROS
 }  // namespace costmap_3d
 
-#endif  // COSTMAP_3D_COSTMAP_3D_ROS_H
+#endif  // COSTMAP_3D_COSTMAP_3D_ROS_H_

@@ -77,4 +77,4 @@ geometry_msgs::Point fromOctomapPoint(const octomap::point3d& point);
 
 }  // namespace costmap_3d
 
-#endif  // COSTMAP_3D_COSTMAP_3D_H
+#endif  // COSTMAP_3D_COSTMAP_3D_H_
