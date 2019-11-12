@@ -26,6 +26,7 @@ costmap_3d:
     octomap_server_namespace: '/'
     octomap_server_node_name: occupancy_octomap
     enabled: true
+    # Combine with maximum (1, see cfg/GenericPlugin.cfg for all values)
     combination_method: 1
 
 plugins:
@@ -33,5 +34,6 @@ plugins:
 
 costmap_3d_to_2d:
   enabled: true
+  # Combine with maximum (1, see cfg/GenericPlugin.cfg for all values)
   combination_method: 1
 
