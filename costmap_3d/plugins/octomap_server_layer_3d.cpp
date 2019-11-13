@@ -109,33 +109,36 @@ void OctomapServerLayer3D::reconfigureCallback(costmap_3d::GenericPluginConfig &
 
 void OctomapServerLayer3D::deactivate()
 {
-  super::deactivate();
-  // Unsubscribe from everything.
-  unsubscribe();
   std::lock_guard<Layer3D> lock(*this);
-  reset_srv_.shutdown();
-  erase_bbx_srv_.shutdown();
+  active_ = false;
+  unsubscribe();
+  super::deactivate();
+  reset_client_.shutdown();
+  erase_bbx_client_.shutdown();
 }
 
 void OctomapServerLayer3D::activate()
 {
-  reset_srv_ = pnh_.serviceClient<std_srvs::Empty>(reset_srv_name_);
-  erase_bbx_srv_ = pnh_.serviceClient<octomap_msgs::BoundingBoxQuery>(erase_bbx_srv_name_);
+  ros::ServiceClient reset_client = pnh_.serviceClient<std_srvs::Empty>(reset_srv_name_);
+  ros::ServiceClient erase_bbx_client = pnh_.serviceClient<octomap_msgs::BoundingBoxQuery>(erase_bbx_srv_name_);
 
   // Wait a while for the servers to exist, but not too long.
   // We will handle them not existing below.
-  if (!reset_srv_.waitForExistence(ros::Duration(10.0)))
+  if (!reset_client.waitForExistence(ros::Duration(10.0)))
   {
     ROS_WARN_STREAM("OctomapServerLayer3D " << name_ << ": Failed to wait for service " << reset_srv_name_);
   }
-  if (!erase_bbx_srv_.waitForExistence(ros::Duration(10.0)))
+  if (!erase_bbx_client.waitForExistence(ros::Duration(10.0)))
   {
     ROS_WARN_STREAM("OctomapServerLayer3D " << name_ << ": Failed to wait for service " << erase_bbx_srv_name_);
   }
 
+  std::lock_guard<Layer3D> lock(*this);
+  reset_client_ = reset_client;
+  erase_bbx_client_ = erase_bbx_client;
   super::activate();
-
   subscribe();
+  active_ = true;
 }
 
 void OctomapServerLayer3D::subscribe()
@@ -172,10 +175,10 @@ void OctomapServerLayer3D::reset()
   super::reset();
 
   // reset octomap server
-  if (reset_srv_.exists())
+  if (reset_client_.exists())
   {
     std_srvs::Empty srv;
-    reset_srv_.call(srv);
+    reset_client_.call(srv);
   }
   else
   {
@@ -188,12 +191,12 @@ void OctomapServerLayer3D::resetBoundingBoxUnlocked(Costmap3DIndex min, Costmap3
 {
   super::resetBoundingBoxUnlocked(min, max);
 
-  if (erase_bbx_srv_.exists())
+  if (erase_bbx_client_.exists())
   {
     octomap_msgs::BoundingBoxQuery srv;
     srv.request.min = fromOctomapPoint(costmap_->keyToCoord(min));
     srv.request.max = fromOctomapPoint(costmap_->keyToCoord(max));
-    erase_bbx_srv_.call(srv);
+    erase_bbx_client_.call(srv);
   }
   else
   {
@@ -220,13 +223,19 @@ void OctomapServerLayer3D::matchSize(const geometry_msgs::Point& min, const geom
 void OctomapServerLayer3D::mapCallback(const octomap_msgs::OctomapConstPtr& map_msg)
 {
   std::lock_guard<Layer3D> lock(*this);
-  if (!using_updates_)
+  if (active_ && !using_updates_)
     mapUpdateInternal(map_msg.get(), nullptr);
 }
 
 void OctomapServerLayer3D::mapUpdateCallback(const octomap_msgs::OctomapUpdateConstPtr& map_update_msg)
 {
   std::lock_guard<Layer3D> lock(*this);
+  if (!active_)
+  {
+    // We have been deactivated, but there was still an outstanding message
+    // callback. Throw this message away.
+    return;
+  }
   if (last_seq_)
   {
     if (last_seq_ + 1 < map_update_msg->header.seq)
