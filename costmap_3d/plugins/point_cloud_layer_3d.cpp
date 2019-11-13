@@ -88,19 +88,22 @@ void PointCloudLayer3D::reconfigureCallback(costmap_3d::GenericPluginConfig &con
 
 void PointCloudLayer3D::deactivate()
 {
-  super::deactivate();
+  std::lock_guard<Layer3D> lock(*this);
+  active_ = false;
   unsubscribe();
+  super::deactivate();
 }
 
 void PointCloudLayer3D::activate()
 {
+  std::lock_guard<Layer3D> lock(*this);
   super::activate();
   subscribe();
+  active_ = true;
 }
 
 void PointCloudLayer3D::subscribe()
 {
-  std::lock_guard<Layer3D> lock(*this);
   if (cloud_has_intensity_)
   {
     cloud_sub_ = pnh_.subscribe<PointCloudWithIntensity>(
@@ -117,7 +120,6 @@ void PointCloudLayer3D::subscribe()
 
 void PointCloudLayer3D::unsubscribe()
 {
-  std::lock_guard<Layer3D> lock(*this);
   cloud_sub_.shutdown();
 }
 
@@ -164,7 +166,7 @@ void PointCloudLayer3D::pointCloudCallback(const typename CloudType::ConstPtr& c
   pcl::transformPointCloud(*cloud_msg, *cloud_ptr, global_frame_transform_eigen);
 
   std::lock_guard<Layer3D> lock(*this);
-  if (costmap_)
+  if (active_ && costmap_)
   {
     Costmap3D new_cells(costmap_->getResolution());
     for (auto pt : cloud_msg->points)

@@ -84,6 +84,7 @@ protected:
 
   ros::NodeHandle pnh_;
   std::shared_ptr<dynamic_reconfigure::Server<costmap_3d::GenericPluginConfig>> dsrv_;
+  bool active_;
   std::string cloud_topic_;
   ros::Subscriber cloud_sub_;
   bool cloud_has_intensity_;
