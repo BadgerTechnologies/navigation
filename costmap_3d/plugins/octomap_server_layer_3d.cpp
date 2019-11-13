@@ -151,7 +151,7 @@ void OctomapServerLayer3D::subscribe()
 
 void OctomapServerLayer3D::subscribeUpdatesUnlocked()
 {
-  last_seq_ = 0;
+  first_map_update_received_ = false;
   map_update_sub_ = pnh_.subscribe<octomap_msgs::OctomapUpdate>(map_update_topic_, 10,
                                                                 std::bind(&OctomapServerLayer3D::mapUpdateCallback,
                                                                           this, std::placeholders::_1));
@@ -236,9 +236,23 @@ void OctomapServerLayer3D::mapUpdateCallback(const octomap_msgs::OctomapUpdateCo
     // callback. Throw this message away.
     return;
   }
-  if (last_seq_)
+  if (!first_map_update_received_)
   {
-    if (last_seq_ + 1 < map_update_msg->header.seq)
+    // Check if this the full map published by the connect callback.
+    // That map is signaled by having the octomap_bounds seq be different
+    // from the octomap_update seq.
+    // Ignore any normal published update until the first full map
+    // is received.
+    if (map_update_msg->octomap_bounds.header.seq == map_update_msg->octomap_update.header.seq)
+    {
+      // Ignore this normal update until the first full map is received.
+      return;
+    }
+    first_map_update_received_ = true;
+  }
+  else
+  {
+    if (last_seq_ + 1 < map_update_msg->octomap_bounds.header.seq)
     {
       ROS_WARN("Lost an update message, resubscribing to get entire map.");
       ROS_INFO_STREAM("Expected sequence number " << last_seq_ + 1 << " but received " << map_update_msg->header.seq);
@@ -246,7 +260,7 @@ void OctomapServerLayer3D::mapUpdateCallback(const octomap_msgs::OctomapUpdateCo
       subscribeUpdatesUnlocked();
       return;
     }
-    else if(last_seq_ + 1 > map_update_msg->header.seq)
+    else if(last_seq_ + 1 > map_update_msg->octomap_bounds.header.seq)
     {
       // We have moved backwards. This means either the server restarted, or
       // we are running from a bagfile and it was rewound. In either case,
@@ -254,7 +268,7 @@ void OctomapServerLayer3D::mapUpdateCallback(const octomap_msgs::OctomapUpdateCo
       // nothing to do, as it will reset our memory for us.
     }
   }
-  last_seq_ = map_update_msg->header.seq;
+  last_seq_ = map_update_msg->octomap_bounds.header.seq;
 
   if (!using_updates_)
   {

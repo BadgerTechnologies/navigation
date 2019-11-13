@@ -98,6 +98,7 @@ protected:
   ros::Subscriber map_update_sub_;
   bool using_updates_;
   bool active_;
+  bool first_map_update_received_;
   uint32_t last_seq_;
 };
 

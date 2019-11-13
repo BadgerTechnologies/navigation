@@ -63,13 +63,14 @@ private:
 
   void connectCallback(const ros::SingleSubscriberPublisher& pub);
   octomap_msgs::OctomapPtr createMapMessage(const Costmap3D& map);
-  octomap_msgs::OctomapUpdatePtr createMapUpdateMessage(const Costmap3D& value_map, const Costmap3D& bounds_map);
+  octomap_msgs::OctomapUpdatePtr createMapUpdateMessage(const Costmap3D& value_map, const Costmap3D& bounds_map, bool first_map=false);
 
   std::string update_complete_id;
   ros::NodeHandle nh_;
   LayeredCostmap3D* layered_costmap_3d_;
   ros::Publisher costmap_pub_;
   ros::Publisher costmap_update_pub_;
+  uint32_t update_seq_;
 };
 
 }  // namespace costmap_3d
