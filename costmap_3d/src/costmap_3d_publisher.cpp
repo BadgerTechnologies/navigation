@@ -70,13 +70,16 @@ void Costmap3DPublisher::connectCallback(const ros::SingleSubscriberPublisher& p
   Costmap3D universe(layered_costmap_3d_->getResolution());
   universe.setNodeValueAtDepth(Costmap3DIndex(), 0, LETHAL);
   octomap_msgs::OctomapUpdatePtr msg_ptr;
-  {
-    // Be sure to lock the costmap while using it
-    std::lock_guard<LayeredCostmap3D> costmap_lock(*layered_costmap_3d_);
-    // Send an "update" message with universal bounds and the entire costmap.
-    // This way, a new subscriber starts with the correct map state.
-    msg_ptr = createMapUpdateMessage(*layered_costmap_3d_->getCostmap3D(), universe);
-  }
+
+  // Be sure to lock the costmap while using it, and keep it locked until
+  // we have published the state, otherwise a race can occur when the
+  // map update complete callback publishes and the two messages could
+  // end up out-of-order
+  std::lock_guard<LayeredCostmap3D> costmap_lock(*layered_costmap_3d_);
+  // Send an "update" message with universal bounds and the entire costmap.
+  // This way, a new subscriber starts with the correct map state.
+  msg_ptr = createMapUpdateMessage(*layered_costmap_3d_->getCostmap3D(), universe, true);
+
   pub.publish(msg_ptr);
 }
 
@@ -110,17 +113,30 @@ octomap_msgs::OctomapPtr Costmap3DPublisher::createMapMessage(const Costmap3D& m
 }
 
 octomap_msgs::OctomapUpdatePtr Costmap3DPublisher::createMapUpdateMessage(const Costmap3D& value_map,
-                                                                          const Costmap3D& bounds_map)
+                                                                          const Costmap3D& bounds_map,
+                                                                          bool first_map)
 {
   ros::Time stamp = ros::Time::now();
   std::string frame = layered_costmap_3d_->getGlobalFrameID();
   octomap_msgs::OctomapUpdatePtr msg_ptr(new octomap_msgs::OctomapUpdate);
   msg_ptr->header.frame_id = frame;
   msg_ptr->header.stamp = stamp;
+  msg_ptr->octomap_update.header.seq = update_seq_;
   msg_ptr->octomap_update.header.frame_id = frame;
   msg_ptr->octomap_update.header.stamp = stamp;
+  msg_ptr->octomap_bounds.header.seq = update_seq_;
   msg_ptr->octomap_bounds.header.frame_id = frame;
   msg_ptr->octomap_bounds.header.stamp = stamp;
+  if (first_map)
+  {
+    // On the first map, make the sequences unequal as sentinel
+    msg_ptr->octomap_bounds.header.seq--;
+  }
+  else
+  {
+    // On regular map message, increment the sequence number
+    update_seq_++;
+  }
   // always send costs along with map
   octomap_msgs::fullMapToMsg(value_map, msg_ptr->octomap_update);
   // bounds map is only ever binary
