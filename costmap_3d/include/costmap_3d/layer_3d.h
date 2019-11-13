@@ -147,7 +147,7 @@ protected:
   bool current_;
   std::string name_;
   tf::TransformListener* tf_;
-  std::mutex mutex_;
+  std::recursive_mutex mutex_;
 };
 
 }  // namespace costmap_3d

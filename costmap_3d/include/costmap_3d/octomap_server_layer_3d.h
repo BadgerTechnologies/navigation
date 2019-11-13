@@ -92,11 +92,12 @@ protected:
   std::string map_update_topic_;
   std::string reset_srv_name_;
   std::string erase_bbx_srv_name_;
-  ros::ServiceClient reset_srv_;
-  ros::ServiceClient erase_bbx_srv_;
+  ros::ServiceClient reset_client_;
+  ros::ServiceClient erase_bbx_client_;
   ros::Subscriber map_sub_;
   ros::Subscriber map_update_sub_;
   bool using_updates_;
+  bool active_;
   uint32_t last_seq_;
 };
 
