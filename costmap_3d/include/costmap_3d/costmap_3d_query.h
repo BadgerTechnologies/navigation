@@ -153,6 +153,7 @@ protected:
   virtual void updateMeshResource(const std::string& mesh_resource, double padding = 0.0);
 
 private:
+  // returns path to package file, or empty on error
   std::string getFileNameFromPackageURL(const std::string& url);
 
   using FCLFloat = float;

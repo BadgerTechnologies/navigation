@@ -40,6 +40,7 @@
 #include <fcl/narrowphase/distance_result.h>
 #include <fcl/geometry/shape/sphere.h>
 #include <pcl/io/vtk_lib_io.h>
+#include <ros/ros.h>
 #include <ros/package.h>
 #include <tf/transform_datatypes.h>
 
@@ -147,8 +148,18 @@ void Costmap3DQuery::checkCostmap()
 void Costmap3DQuery::updateMeshResource(const std::string& mesh_resource, double padding)
 {
   std::string filename = getFileNameFromPackageURL(mesh_resource);
+  if (filename.size() == 0)
+  {
+    return;
+  }
   pcl::PolygonMesh mesh;
-  pcl::io::loadPolygonFileSTL(filename, mesh);
+  int pcl_rv = pcl::io::loadPolygonFileSTL(filename, mesh);
+  if (pcl_rv < 0)
+  {
+    ROS_ERROR_STREAM("Costmap3DQuery: unable to load STL mesh file " << filename
+                     << " query object will always return collision!");
+    return;
+  }
   pcl::PointCloud<pcl::PointXYZ>::Ptr mesh_points(new pcl::PointCloud<pcl::PointXYZ>);
   pcl::fromPCLPointCloud2(mesh.cloud, *mesh_points);
 
@@ -194,7 +205,10 @@ std::string Costmap3DQuery::getFileNameFromPackageURL(const std::string& url)
     size_t pos = mod_url.find("/");
     if (pos == std::string::npos)
     {
-      throw std::ios_base::failure("Could not parse package:// format URL " + url);
+      ROS_ERROR_STREAM("Costmap3DQuery: Could not parse package:// format URL "
+                       << url
+                       << " query object will always return collision!");
+      return "";
     }
 
     std::string package = mod_url.substr(0, pos);
@@ -203,7 +217,10 @@ std::string Costmap3DQuery::getFileNameFromPackageURL(const std::string& url)
 
     if (package_path.empty())
     {
-      throw std::ios_base::failure("Package [" + package + "] from URL " + url + " does not exist");
+      ROS_ERROR_STREAM("Costmap3DQuery: Package [" << package << "] from URL "
+                       << url << " does not exist, "
+                       << " query object will always return collision!");
+      return "";
     }
 
     mod_url = package_path + mod_url;
@@ -224,9 +241,14 @@ double Costmap3DQuery::footprintCost(geometry_msgs::Pose pose)
 
 bool Costmap3DQuery::footprintCollision(geometry_msgs::Pose pose)
 {
+  if (!robot_obj_)
+  {
+    // We failed to create a robot model.
+    // The failure would have been logged, so simply return collision.
+    return true;
+  }
   checkCostmap();
   assert(world_obj_);
-  assert(robot_obj_);
 
   FCLCollisionObjectPtr robot(getRobotCollisionObject(pose));
   FCLCollisionObjectPtr world(getWorldCollisionObject());
@@ -241,9 +263,14 @@ bool Costmap3DQuery::footprintCollision(geometry_msgs::Pose pose)
 
 double Costmap3DQuery::footprintDistance(geometry_msgs::Pose pose)
 {
+  if (!robot_obj_)
+  {
+    // We failed to create a robot model.
+    // The failure would have been logged, so simply return collision.
+    return -1.0;
+  }
   checkCostmap();
   assert(world_obj_);
-  assert(robot_obj_);
 
   FCLCollisionObjectPtr robot(getRobotCollisionObject(pose));
   FCLCollisionObjectPtr world(getWorldCollisionObject());
@@ -295,11 +322,16 @@ double Costmap3DQuery::footprintDistance(geometry_msgs::Pose pose)
 
 double Costmap3DQuery::footprintSignedDistance(geometry_msgs::Pose pose)
 {
+  if (!robot_obj_)
+  {
+    // We failed to create a robot model.
+    // The failure would have been logged, so simply return collision.
+    return -1.0;
+  }
   checkCostmap();
   // TODO: Figure out how to apply distance cache to signed distance.
   // TODO: Think about how to make this work w/ meshes representing a solid and octomaps
   assert(world_obj_);
-  assert(robot_obj_);
   FCLCollisionObjectPtr robot(getRobotCollisionObject(pose));
   FCLCollisionObjectPtr world(getWorldCollisionObject());
 
