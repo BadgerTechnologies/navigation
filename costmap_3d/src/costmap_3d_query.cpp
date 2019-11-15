@@ -289,10 +289,6 @@ double Costmap3DQuery::footprintDistance(geometry_msgs::Pose pose)
   FCLCollisionObjectPtr world(getWorldCollisionObject());
 
   FCLFloat pose_distance = std::numeric_limits<FCLFloat>::max();
-//  FCLFloat pose_distance = 1.0;
-
-  fcl::DistanceRequest<FCLFloat> request;
-  fcl::DistanceResult<FCLFloat> result;
 
   DistanceCacheKey micro_cache_key(pose, pose_micro_bins_per_meter_, pose_micro_bins_per_radian_);
   // if we hit the micro cache, use the result directly.
@@ -301,6 +297,9 @@ double Costmap3DQuery::footprintDistance(geometry_msgs::Pose pose)
   {
     return micro_cache_entry->second.distanceToNewPose(pose);
   }
+
+  fcl::DistanceRequest<FCLFloat> request;
+  fcl::DistanceResult<FCLFloat> result;
 
   DistanceCacheKey cache_key(pose, pose_bins_per_meter_, pose_bins_per_radian_);
   auto cache_entry = distance_cache_.find(cache_key);
