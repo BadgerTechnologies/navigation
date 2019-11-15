@@ -378,15 +378,16 @@ void Costmap3DROS::processPlanCost3D(RequestType& request, ResponseType& respons
     bool collision = false;
     // NOTE: Costmap3D does not support time (its not a 4D costmap!) so ignore the stamp.
     const auto pose = request.poses[i].pose;
+    double pose_cost = -1.0;
     // Warn if the frame doesn't match. We currently don't transform the poses.
     if (request.poses[i].header.frame_id != layered_costmap_3d_.getGlobalFrameID())
     {
       ROS_WARN_STREAM_THROTTLE(1.0, "Costmap3DROS::getPlanCost3DServiceCallback expects poses in frame " <<
                                layered_costmap_3d_.getGlobalFrameID() << " but pose was in frame " <<
                                request.poses[i].header.frame_id);
+      // Leave the pose_cost lethal
     }
-    double pose_cost;
-    if (request.cost_query_mode == GetPlanCost3DService::Request::COST_QUERY_MODE_COLLISION_ONLY)
+    else if (request.cost_query_mode == GetPlanCost3DService::Request::COST_QUERY_MODE_COLLISION_ONLY)
     {
       pose_cost = query->footprintCollision(pose) ? -1.0 : 0.0;
     }
