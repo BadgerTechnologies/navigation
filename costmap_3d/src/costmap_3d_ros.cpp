@@ -64,40 +64,43 @@ Costmap3DROS::Costmap3DROS(std::string name, tf::TransformListener& tf)
         std::bind(&Costmap3DROS::getPlanCost3DActionCallback, this, std::placeholders::_1),
         false)
 {
-  std::lock_guard<std::mutex> initialize_lock(initialized_mutex_);
-
-  if (!private_nh_.getParam("costmap_3d/footprint_mesh_resource", footprint_mesh_resource_))
   {
-    ROS_ERROR("Unable to find footprint_mesh_resource parameter");
-  }
+    std::lock_guard<std::mutex> initialize_lock(initialized_mutex_);
 
-  XmlRpc::XmlRpcValue my_list;
-  private_nh_.getParam("costmap_3d/plugins", my_list);
-  for (int32_t i = 0; i < my_list.size(); ++i)
-  {
-    std::string pname = static_cast<std::string>(my_list[i]["name"]);
-    std::string type = static_cast<std::string>(my_list[i]["type"]);
-
-    try
+    if (!private_nh_.getParam("costmap_3d/footprint_mesh_resource", footprint_mesh_resource_))
     {
-      boost::shared_ptr<Layer3D> plugin = plugin_loader_.createInstance(type);
-      ROS_INFO_STREAM("Using 3D plugin \"" << pname << "\" of type \"" << type << "\"");
-      plugin->initialize(&layered_costmap_3d_, name + "/costmap_3d/" + pname, &tf_);
-      layered_costmap_3d_.addPlugin(plugin);
+      ROS_ERROR("Unable to find footprint_mesh_resource parameter");
     }
-    catch (class_loader::ClassLoaderException e)
+
+    XmlRpc::XmlRpcValue my_list;
+    private_nh_.getParam("costmap_3d/plugins", my_list);
+    for (int32_t i = 0; i < my_list.size(); ++i)
     {
-      ROS_ERROR_STREAM("Unable to load plugin \"" << pname << "\" of type \"" << type << "\". Error: " << e.what());
+      std::string pname = static_cast<std::string>(my_list[i]["name"]);
+      std::string type = static_cast<std::string>(my_list[i]["type"]);
+
+      try
+      {
+        boost::shared_ptr<Layer3D> plugin = plugin_loader_.createInstance(type);
+        ROS_INFO_STREAM("Using 3D plugin \"" << pname << "\" of type \"" << type << "\"");
+        plugin->initialize(&layered_costmap_3d_, name + "/costmap_3d/" + pname, &tf_);
+        layered_costmap_3d_.addPlugin(plugin);
+      }
+      catch (class_loader::ClassLoaderException e)
+      {
+        ROS_ERROR_STREAM("Unable to load plugin \"" << pname << "\" of type \"" << type << "\". Error: " << e.what());
+      }
     }
+
+    if (layered_costmap_3d_.getPlugins().size() == 0)
+    {
+      ROS_ERROR("3D costmap has no plugin layers!");
+    }
+    footprint_pub_ = private_nh_.advertise<visualization_msgs::Marker>("footprint_3d", 1, true);
+    initialized_ = true;
   }
 
-  if (layered_costmap_3d_.getPlugins().size() == 0)
-  {
-    ROS_ERROR("3D costmap has no plugin layers!");
-  }
-
-  footprint_pub_ = private_nh_.advertise<visualization_msgs::Marker>("footprint_3d", 1, true);
-
+  // Now that the object is initialized, advertise dynamic reconfigure and services
   dsrv_.setCallback(
       std::bind(
           &Costmap3DROS::reconfigureCB,
@@ -110,8 +113,6 @@ Costmap3DROS::Costmap3DROS(std::string name, tf::TransformListener& tf)
       "get_plan_cost_3d",
       &Costmap3DROS::getPlanCost3DServiceCallback,
       this);
-
-  initialized_ = true;
 }
 
 Costmap3DROS::~Costmap3DROS()
@@ -360,7 +361,6 @@ template <typename RequestType, typename ResponseType>
 void Costmap3DROS::processPlanCost3D(RequestType& request, ResponseType& response)
 {
   // Be sure the costmap is locked while querying, if necessary.
-  // Do not bother locking the 2D costmap, as only the 3D is queried.
   std::unique_lock <LayeredCostmap3D> lock(layered_costmap_3d_, std::defer_lock);
   std::shared_ptr<Costmap3DQuery> query;
 
