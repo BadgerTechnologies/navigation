@@ -50,8 +50,9 @@
 namespace costmap_3d
 {
 
-Costmap3DROS::Costmap3DROS(std::string name, tf::TransformListener& tf) :
-    super(name, tf),
+Costmap3DROS::Costmap3DROS(std::string name, tf::TransformListener& tf)
+  : super(name, tf),
+    layered_costmap_3d_(layered_costmap_),
     initialized_(false),
     plugin_loader_("costmap_3d", "costmap_3d::Layer3D")
 {
@@ -62,8 +63,6 @@ Costmap3DROS::Costmap3DROS(std::string name, tf::TransformListener& tf) :
   {
     ROS_ERROR("Unable to find footprint_mesh_resource parameter");
   }
-
-  layered_costmap_3d_.reset(new LayeredCostmap3D(layered_costmap_));
 
   if (private_nh.hasParam("costmap_3d/plugins"))
   {
@@ -76,12 +75,12 @@ Costmap3DROS::Costmap3DROS(std::string name, tf::TransformListener& tf) :
       ROS_INFO("Using 3D plugin \"%s\"", pname.c_str());
 
       boost::shared_ptr<Layer3D> plugin = plugin_loader_.createInstance(type);
-      plugin->initialize(layered_costmap_3d_.get(), name + "/costmap_3d/" + pname, &tf_);
-      layered_costmap_3d_->addPlugin(plugin);
+      plugin->initialize(&layered_costmap_3d_, name + "/costmap_3d/" + pname, &tf_);
+      layered_costmap_3d_.addPlugin(plugin);
     }
   }
 
-  publisher_.reset(new Costmap3DPublisher(private_nh, layered_costmap_3d_.get(), "costmap_3d"));
+  publisher_.reset(new Costmap3DPublisher(private_nh, &layered_costmap_3d_, "costmap_3d"));
 
   footprint_pub_ = private_nh.advertise<visualization_msgs::Marker>("footprint_3d", 1, true);
 
@@ -117,7 +116,7 @@ void Costmap3DROS::reconfigureCB(Costmap3DConfig &config, uint32_t level)
   geometry_msgs::Point min, max;
 
   // Get the x/y values from the 2D costmap
-  if (layered_costmap_3d_->isRolling())
+  if (layered_costmap_3d_.isRolling())
   {
     // If we are rolling, set the origin to zero, as we will shift the limits
     // based on the base position ourselves in updateMap, since the octomap is
@@ -136,8 +135,8 @@ void Costmap3DROS::reconfigureCB(Costmap3DConfig &config, uint32_t level)
   min.z = config.map_z_min;
   max.z = config.map_z_max;
 
-  layered_costmap_3d_->setBounds(min, max);
-  layered_costmap_3d_->setResolution();
+  layered_costmap_3d_.setBounds(min, max);
+  layered_costmap_3d_.setResolution();
 
   footprint_3d_padding_ = config.footprint_3d_padding;
 
@@ -158,7 +157,7 @@ void Costmap3DROS::updateMap()
     {
       geometry_msgs::Pose pose_msg;
       tf::poseTFToMsg(pose, pose_msg);
-      layered_costmap_3d_->updateMap(pose_msg);
+      layered_costmap_3d_.updateMap(pose_msg);
     }
 
     // Now update the 2D map
@@ -171,7 +170,7 @@ void Costmap3DROS::start()
   // check if we're stopped or just paused
   if (isStopped())
   {
-    layered_costmap_3d_->activate();
+    layered_costmap_3d_.activate();
   }
 
   super::start();
@@ -180,12 +179,12 @@ void Costmap3DROS::start()
 void Costmap3DROS::stop()
 {
   super::stop();
-  layered_costmap_3d_->deactivate();
+  layered_costmap_3d_.deactivate();
 }
 
 void Costmap3DROS::resetLayers()
 {
-  layered_costmap_3d_->reset();
+  layered_costmap_3d_.reset();
   super::resetLayers();
 }
 
@@ -195,8 +194,8 @@ std::shared_ptr<Costmap3DQuery> Costmap3DROS::getBufferedQuery(
 {
   const std::string& query_mesh(getFootprintMeshResource(footprint_mesh_resource));
   padding = getFootprintPadding(padding);
-  std::lock_guard<LayeredCostmap3D> lock(*layered_costmap_3d_);
-  return std::shared_ptr<Costmap3DQuery>(new Costmap3DQuery(layered_costmap_3d_->getCostmap3D(), query_mesh, padding));
+  std::lock_guard<LayeredCostmap3D> lock(layered_costmap_3d_);
+  return std::shared_ptr<Costmap3DQuery>(new Costmap3DQuery(layered_costmap_3d_.getCostmap3D(), query_mesh, padding));
 }
 
 std::shared_ptr<Costmap3DQuery> Costmap3DROS::getAssociatedQuery(
@@ -205,8 +204,8 @@ std::shared_ptr<Costmap3DQuery> Costmap3DROS::getAssociatedQuery(
 {
   const std::string& query_mesh(getFootprintMeshResource(footprint_mesh_resource));
   padding = getFootprintPadding(padding);
-  std::lock_guard<LayeredCostmap3D> lock(*layered_costmap_3d_);
-  return std::shared_ptr<Costmap3DQuery>(new Costmap3DQuery(layered_costmap_3d_, query_mesh, padding));
+  std::lock_guard<LayeredCostmap3D> lock(layered_costmap_3d_);
+  return std::shared_ptr<Costmap3DQuery>(new Costmap3DQuery(&layered_costmap_3d_, query_mesh, padding));
 }
 
 std::set<std::string> Costmap3DROS::getLayerNames()
@@ -214,10 +213,10 @@ std::set<std::string> Costmap3DROS::getLayerNames()
   // Begin with any 2D layers
   std::set<std::string> plugin_names(super::getLayerNames());
 
-  std::lock_guard<LayeredCostmap3D> lock(*layered_costmap_3d_);
+  std::lock_guard<LayeredCostmap3D> lock(layered_costmap_3d_);
 
   // Add the 3D layers to the list
-  for (auto plugin : layered_costmap_3d_->getPlugins())
+  for (auto plugin : layered_costmap_3d_.getPlugins())
   {
     plugin_names.insert(plugin->getName());
   }
@@ -229,9 +228,9 @@ void Costmap3DROS::resetBoundingBox(geometry_msgs::Point min, geometry_msgs::Poi
 {
   super::resetBoundingBox(min, max, layers);
 
-  std::lock_guard<LayeredCostmap3D> lock(*layered_costmap_3d_);
+  std::lock_guard<LayeredCostmap3D> lock(layered_costmap_3d_);
 
-  for (auto plugin : layered_costmap_3d_->getPlugins())
+  for (auto plugin : layered_costmap_3d_.getPlugins())
   {
     // Only reset layers that are in the layers list argument.
     // This is not super efficient if the number of layers is large.
@@ -300,7 +299,7 @@ std::shared_ptr<Costmap3DQuery> Costmap3DROS::getQuery(const std::string& footpr
   {
     // Query object does not exist, create it and add it to the map
     std::shared_ptr<Costmap3DQuery> query;
-    query.reset(new Costmap3DQuery(layered_costmap_3d_, query_mesh, padding));
+    query.reset(new Costmap3DQuery(&layered_costmap_3d_, query_mesh, padding));
     query_it = query_map_.insert(std::make_pair(query_pair, query)).first;
   }
   return query_it->second;
@@ -355,7 +354,7 @@ void Costmap3DROS::processPlanCost3D(RequestType& request, ResponseType& respons
 {
   // Be sure the costmap is locked while querying, if necessary.
   // Do not bother locking the 2D costmap, as only the 3D is queried.
-  std::unique_lock <LayeredCostmap3D> lock(*layered_costmap_3d_, std::defer_lock);
+  std::unique_lock <LayeredCostmap3D> lock(layered_costmap_3d_, std::defer_lock);
   std::shared_ptr<Costmap3DQuery> query;
 
 #if (COSTMAP_3D_ROS_AUTO_PROFILE_QUERY) > 0
@@ -394,10 +393,10 @@ void Costmap3DROS::processPlanCost3D(RequestType& request, ResponseType& respons
     // NOTE: Costmap3D does not support time (its not a 4D costmap!) so ignore the stamp.
     const auto pose = request.poses[i].pose;
     // Warn if the frame doesn't match. We currently don't transform the poses.
-    if (request.poses[i].header.frame_id != layered_costmap_3d_->getGlobalFrameID())
+    if (request.poses[i].header.frame_id != layered_costmap_3d_.getGlobalFrameID())
     {
       ROS_WARN_STREAM_THROTTLE(1.0, "Costmap3DROS::getPlanCost3DServiceCallback expects poses in frame " <<
-                               layered_costmap_3d_->getGlobalFrameID() << " but pose was in frame " <<
+                               layered_costmap_3d_.getGlobalFrameID() << " but pose was in frame " <<
                                request.poses[i].header.frame_id);
     }
     double pose_cost;

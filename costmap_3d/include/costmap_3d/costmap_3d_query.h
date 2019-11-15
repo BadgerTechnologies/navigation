@@ -64,7 +64,7 @@ public:
    * and the corresponding costmap 3D must be locked during queries.
    */
   Costmap3DQuery(
-      const std::shared_ptr<LayeredCostmap3D>& layered_costmap_3d,
+      const LayeredCostmap3D* layered_costmap_3d,
       const std::string& mesh_resource,
       double padding = 0.0,
       unsigned int pose_bins_per_meter = 4,
@@ -140,7 +140,7 @@ public:
   virtual double footprintSignedDistance(geometry_msgs::Pose pose);
 
 protected:
-  std::shared_ptr<LayeredCostmap3D> layered_costmap_3d_;
+  const LayeredCostmap3D* layered_costmap_3d_;
 
   /** @brief Ensure query map matches currently active costmap.
    * Note: must be called on every query to ensure that the correct Costmap3D is being queried.

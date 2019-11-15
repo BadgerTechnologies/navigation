@@ -47,7 +47,8 @@
 namespace costmap_3d
 {
 
-Costmap3DQuery::Costmap3DQuery(const std::shared_ptr<LayeredCostmap3D>& layered_costmap_3d,
+Costmap3DQuery::Costmap3DQuery(
+    const LayeredCostmap3D* layered_costmap_3d,
     const std::string& mesh_resource,
     double padding,
     unsigned int pose_bins_per_meter,

@@ -82,7 +82,7 @@ public:
    * Note: assumes lock is held (not using atomic ops or explicit barriers, so
    * an old value could be returned w/out the lock held)
    */
-  unsigned int getNumberOfUpdates() {return num_updates_;}
+  unsigned int getNumberOfUpdates() const {return num_updates_;}
 
   std::string getGlobalFrameID() const {return layered_costmap_2d_->getGlobalFrameID();}
   /**
