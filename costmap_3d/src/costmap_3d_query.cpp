@@ -305,19 +305,25 @@ double Costmap3DQuery::footprintDistance(geometry_msgs::Pose pose)
   auto cache_entry = distance_cache_.find(cache_key);
   if (cache_entry != distance_cache_.end())
   {
+    // Cache hit, find the distance between the mesh triangle at the new pose
+    // and the octomap box, and use this as our initial guess in the result.
+    // This greatly prunes the search tree, yielding a big increase in runtime
+    // performance.
     pose_distance = cache_entry->second.distanceToNewPose(pose);
     cache_entry->second.setupResult(&result);
   }
   else if(distance_cache_.size() > 0)
   {
+    // Cache miss, use the beginning of the cache to set the initial guess.
+    // This still prunes the search better than no initial guess in certain
+    // circumstances and is relatively cheap to calculate. This guess is still
+    // a correct upper bound, as the minimum distance must be less or equal to
+    // the mesh triangle at the new pose and the old nearest octomap cell.
     auto begin = distance_cache_.begin();
     pose_distance = begin->second.distanceToNewPose(pose);
     begin->second.setupResult(&result);
   }
 
-  request.rel_err = 0.001;
-  request.abs_err = 0.0;
-  request.distance_tolerance = .001;
   request.enable_nearest_points = true;
 
   result.min_distance = pose_distance;
