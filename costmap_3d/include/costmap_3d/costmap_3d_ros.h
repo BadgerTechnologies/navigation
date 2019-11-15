@@ -92,7 +92,7 @@ public:
   /** @brief Returns true if all layers have current sensor data. */
   virtual bool isCurrent()
   {
-    return super::isCurrent() && layered_costmap_3d_->isCurrent();
+    return super::isCurrent() && layered_costmap_3d_.isCurrent();
   }
 
   /* Unlike Costmap2D, provide no interface to the 3D layered costmap internals.
@@ -206,7 +206,7 @@ public:
                                          double padding = NAN);
 
 protected:
-  std::shared_ptr<LayeredCostmap3D> layered_costmap_3d_;
+  LayeredCostmap3D layered_costmap_3d_;
 
 private:
   // Because the parent class starts a thread calling updateMap right away,
