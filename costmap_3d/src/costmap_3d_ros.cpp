@@ -52,22 +52,22 @@ namespace costmap_3d
 
 Costmap3DROS::Costmap3DROS(std::string name, tf::TransformListener& tf)
   : super(name, tf),
+    private_nh_("~/" + name + "/"),
     layered_costmap_3d_(layered_costmap_),
     initialized_(false),
     plugin_loader_("costmap_3d", "costmap_3d::Layer3D")
 {
   std::lock_guard<std::mutex> initialize_lock(initialized_mutex_);
-  ros::NodeHandle private_nh("~/" + name + "/");
 
-  if (!private_nh.getParam("costmap_3d/footprint_mesh_resource", footprint_mesh_resource_))
+  if (!private_nh_.getParam("costmap_3d/footprint_mesh_resource", footprint_mesh_resource_))
   {
     ROS_ERROR("Unable to find footprint_mesh_resource parameter");
   }
 
-  if (private_nh.hasParam("costmap_3d/plugins"))
+  if (private_nh_.hasParam("costmap_3d/plugins"))
   {
     XmlRpc::XmlRpcValue my_list;
-    private_nh.getParam("costmap_3d/plugins", my_list);
+    private_nh_.getParam("costmap_3d/plugins", my_list);
     for (int32_t i = 0; i < my_list.size(); ++i)
     {
       std::string pname = static_cast<std::string>(my_list[i]["name"]);
@@ -80,9 +80,9 @@ Costmap3DROS::Costmap3DROS(std::string name, tf::TransformListener& tf)
     }
   }
 
-  publisher_.reset(new Costmap3DPublisher(private_nh, &layered_costmap_3d_, "costmap_3d"));
+  publisher_.reset(new Costmap3DPublisher(private_nh_, &layered_costmap_3d_, "costmap_3d"));
 
-  footprint_pub_ = private_nh.advertise<visualization_msgs::Marker>("footprint_3d", 1, true);
+  footprint_pub_ = private_nh_.advertise<visualization_msgs::Marker>("footprint_3d", 1, true);
 
   dsrv_.reset(new dynamic_reconfigure::Server<Costmap3DConfig>(ros::NodeHandle("~/" + name + "/costmap_3d")));
   dynamic_reconfigure::Server<Costmap3DConfig>::CallbackType cb = std::bind(&Costmap3DROS::reconfigureCB,
@@ -92,12 +92,12 @@ Costmap3DROS::Costmap3DROS(std::string name, tf::TransformListener& tf)
   dsrv_->setCallback(cb);
 
   get_plan_cost_action_srv_.reset(new actionlib::SimpleActionServer<GetPlanCost3DAction>(
-          private_nh,
+          private_nh_,
           "get_plan_cost_3d",
           std::bind(&Costmap3DROS::getPlanCost3DActionCallback, this, std::placeholders::_1),
           false));
   get_plan_cost_action_srv_->start();
-  get_plan_cost_srv_ = private_nh.advertiseService("get_plan_cost_3d",
+  get_plan_cost_srv_ = private_nh_.advertiseService("get_plan_cost_3d",
             &Costmap3DROS::getPlanCost3DServiceCallback, this);
 
   initialized_ = true;

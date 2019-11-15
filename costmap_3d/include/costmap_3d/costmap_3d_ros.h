@@ -206,6 +206,7 @@ public:
                                          double padding = NAN);
 
 protected:
+  ros::NodeHandle private_nh_;
   LayeredCostmap3D layered_costmap_3d_;
 
 private:
