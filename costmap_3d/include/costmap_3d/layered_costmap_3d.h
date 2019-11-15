@@ -122,15 +122,13 @@ public:
 
   double getResolution() const;
 
-  /**
-   * @brief Set the resolution.
-   *
-   * If no resolution is given, sets the resolution to match the 2D costmap.
-   */
-  void setResolution(double resolution=0.0);
-
   void getBounds(geometry_msgs::Point* min, geometry_msgs::Point* max);
-  void setBounds(const geometry_msgs::Point& min, const geometry_msgs::Point& max);
+
+  /**
+   * @brief Set the Z bounds.
+   * The X/Y bounds come from the 2D layered costmap.
+   */
+  void setBounds(double min_z, double max_z);
 
   // Pass the complete costmap, the delta map from the last update, and the
   // bounds map on every completion.
@@ -154,6 +152,17 @@ public:
   costmap_2d::LayeredCostmap* getLayeredCostmap2D() {return layered_costmap_2d_;}
 
 private:
+  // Check to see if our bounds match the 2D map, and change bounds if necessary.
+  // Check to see if our resolution matches the 2D map, and change it if necessary.
+  // Lock must be held while calling this internal function
+  void matchBoundsAndResolution();
+
+  // Update our Z bounds and also check to see if our bounds match the 2D map,
+  // and change bounds if necessary.
+  // Check to see if our resolution matches the 2D map, and change it if necessary.
+  // Lock must be held while calling this internal function
+  void matchBoundsAndResolution(double min_z, double max_z);
+
   // Lock must be held while calling this internal function
   void sizeChange();
 
