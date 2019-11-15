@@ -55,7 +55,14 @@ Costmap3DROS::Costmap3DROS(std::string name, tf::TransformListener& tf)
     private_nh_("~/" + name + "/"),
     layered_costmap_3d_(layered_costmap_),
     initialized_(false),
-    plugin_loader_("costmap_3d", "costmap_3d::Layer3D")
+    plugin_loader_("costmap_3d", "costmap_3d::Layer3D"),
+    publisher_(private_nh_, &layered_costmap_3d_, "costmap_3d"),
+    dsrv_(ros::NodeHandle("~/" + name + "/costmap_3d")),
+    get_plan_cost_action_srv_(
+        private_nh_,
+        "get_plan_cost_3d",
+        std::bind(&Costmap3DROS::getPlanCost3DActionCallback, this, std::placeholders::_1),
+        false)
 {
   std::lock_guard<std::mutex> initialize_lock(initialized_mutex_);
 
@@ -80,35 +87,26 @@ Costmap3DROS::Costmap3DROS(std::string name, tf::TransformListener& tf)
     }
   }
 
-  publisher_.reset(new Costmap3DPublisher(private_nh_, &layered_costmap_3d_, "costmap_3d"));
-
   footprint_pub_ = private_nh_.advertise<visualization_msgs::Marker>("footprint_3d", 1, true);
 
-  dsrv_.reset(new dynamic_reconfigure::Server<Costmap3DConfig>(ros::NodeHandle("~/" + name + "/costmap_3d")));
-  dynamic_reconfigure::Server<Costmap3DConfig>::CallbackType cb = std::bind(&Costmap3DROS::reconfigureCB,
-                                                                            this,
-                                                                            std::placeholders::_1,
-                                                                            std::placeholders::_2);
-  dsrv_->setCallback(cb);
+  dsrv_.setCallback(
+      std::bind(
+          &Costmap3DROS::reconfigureCB,
+          this,
+          std::placeholders::_1,
+          std::placeholders::_2));
 
-  get_plan_cost_action_srv_.reset(new actionlib::SimpleActionServer<GetPlanCost3DAction>(
-          private_nh_,
-          "get_plan_cost_3d",
-          std::bind(&Costmap3DROS::getPlanCost3DActionCallback, this, std::placeholders::_1),
-          false));
-  get_plan_cost_action_srv_->start();
-  get_plan_cost_srv_ = private_nh_.advertiseService("get_plan_cost_3d",
-            &Costmap3DROS::getPlanCost3DServiceCallback, this);
+  get_plan_cost_action_srv_.start();
+  get_plan_cost_srv_ = private_nh_.advertiseService(
+      "get_plan_cost_3d",
+      &Costmap3DROS::getPlanCost3DServiceCallback,
+      this);
 
   initialized_ = true;
 }
 
 Costmap3DROS::~Costmap3DROS()
 {
-  // Query objects must be deleted prior to the layered costmap
-  query_map_.clear();
-  // Publisher must be freed before the 3D costmap
-  publisher_.reset();
 }
 
 void Costmap3DROS::reconfigureCB(Costmap3DConfig &config, uint32_t level)
@@ -338,7 +336,7 @@ void Costmap3DROS::getPlanCost3DActionCallback(
 {
   GetPlanCost3DResult result;
   processPlanCost3D(*goal, result);
-  get_plan_cost_action_srv_->setSucceeded(result);
+  get_plan_cost_action_srv_.setSucceeded(result);
 }
 
 bool Costmap3DROS::getPlanCost3DServiceCallback(
