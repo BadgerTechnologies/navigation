@@ -123,28 +123,7 @@ void Costmap3DROS::reconfigureCB(Costmap3DConfig &config, uint32_t level)
 {
   geometry_msgs::Point min, max;
 
-  // Get the x/y values from the 2D costmap
-  if (layered_costmap_3d_.isRolling())
-  {
-    // If we are rolling, set the origin to zero, as we will shift the limits
-    // based on the base position ourselves in updateMap, since the octomap is
-    // always originated at (0, 0, 0).
-    min.x = 0.0;
-    min.y = 0.0;
-  }
-  else
-  {
-    // If we are not rolling, use the 2D origin as the minimum.
-    min.x = layered_costmap_->getCostmap()->getOriginX();
-    min.y = layered_costmap_->getCostmap()->getOriginY();
-  }
-  max.x = min.x + layered_costmap_->getCostmap()->getSizeInMetersX();
-  max.y = min.y + layered_costmap_->getCostmap()->getSizeInMetersY();
-  min.z = config.map_z_min;
-  max.z = config.map_z_max;
-
-  layered_costmap_3d_.setBounds(min, max);
-  layered_costmap_3d_.setResolution();
+  layered_costmap_3d_.setBounds(config.map_z_min, config.map_z_max);
 
   footprint_3d_padding_ = config.footprint_3d_padding;
 

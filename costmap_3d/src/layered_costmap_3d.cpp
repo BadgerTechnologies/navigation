@@ -59,10 +59,10 @@ LayeredCostmap3D::~LayeredCostmap3D()
 
 void LayeredCostmap3D::updateMap(geometry_msgs::Pose robot_pose)
 {
-  setResolution();
-
   // Lock the master costmap
   std::lock_guard<LayeredCostmap3D> lock(*this);
+
+  matchBoundsAndResolution();
 
   num_updates_++;
 
@@ -250,20 +250,6 @@ double LayeredCostmap3D::getResolution() const
   return resolution_;
 }
 
-void LayeredCostmap3D::setResolution(double resolution)
-{
-  std::lock_guard<LayeredCostmap3D> lock(*this);
-  if (resolution <= 0.0)
-  {
-    resolution = layered_costmap_2d_->getCostmap()->getResolution();
-  }
-  if (resolution > 0.0 && resolution != resolution_)
-  {
-    resolution_ = resolution;
-    sizeChange();
-  }
-}
-
 void LayeredCostmap3D::getBounds(geometry_msgs::Point* min, geometry_msgs::Point* max)
 {
   // keep the view of min/max consistent
@@ -272,9 +258,41 @@ void LayeredCostmap3D::getBounds(geometry_msgs::Point* min, geometry_msgs::Point
   *max = max_point_;
 }
 
-void LayeredCostmap3D::setBounds(const geometry_msgs::Point& min, const geometry_msgs::Point& max)
+void LayeredCostmap3D::setBounds(double min_z, double max_z)
 {
   std::lock_guard<LayeredCostmap3D> lock(*this);
+  matchBoundsAndResolution(min_z, max_z);
+}
+
+void LayeredCostmap3D::matchBoundsAndResolution()
+{
+  // Just call matchBounds w/ the current Z bounds
+  matchBoundsAndResolution(min_point_.z, max_point_.z);
+}
+
+void LayeredCostmap3D::matchBoundsAndResolution(double min_z, double max_z)
+{
+  bool change_size = false;
+  geometry_msgs::Point min, max;
+  min.z = min_z;
+  max.z = max_z;
+  // Get the x/y values from the 2D costmap
+  if (isRolling())
+  {
+    // If we are rolling, set the origin to zero, as we will shift the limits
+    // based on the base position ourselves in updateMap, since the octomap is
+    // always originated at (0, 0, 0).
+    min.x = 0.0;
+    min.y = 0.0;
+  }
+  else
+  {
+    // If we are not rolling, use the 2D origin as the minimum.
+    min.x = layered_costmap_2d_->getCostmap()->getOriginX();
+    min.y = layered_costmap_2d_->getCostmap()->getOriginY();
+  }
+  max.x = min.x + layered_costmap_2d_->getCostmap()->getSizeInMetersX();
+  max.y = min.y + layered_costmap_2d_->getCostmap()->getSizeInMetersY();
   if (min.x != min_point_.x ||
       min.y != min_point_.y ||
       min.z != min_point_.z ||
@@ -285,6 +303,16 @@ void LayeredCostmap3D::setBounds(const geometry_msgs::Point& min, const geometry
     ROS_DEBUG_STREAM("LayeredCostmap3D: min point " << min << " max point " << max);
     min_point_ = min;
     max_point_ = max;
+    change_size = true;
+  }
+  double resolution = layered_costmap_2d_->getCostmap()->getResolution();
+  if (resolution > 0.0 && resolution != resolution_)
+  {
+    resolution_ = resolution;
+    change_size = true;
+  }
+  if (change_size)
+  {
     sizeChange();
   }
 }
@@ -292,7 +320,10 @@ void LayeredCostmap3D::setBounds(const geometry_msgs::Point& min, const geometry
 void LayeredCostmap3D::sizeChange()
 {
   size_changed_ = true;
-  costmap_.reset(new Costmap3D(resolution_));
+  if (resolution_ > 0.0)
+  {
+    costmap_.reset(new Costmap3D(resolution_));
+  }
   for (auto plugin : plugins_)
   {
     plugin->matchSize(min_point_, max_point_, resolution_);
