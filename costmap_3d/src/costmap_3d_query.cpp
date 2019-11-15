@@ -145,6 +145,43 @@ void Costmap3DQuery::checkCostmap()
   }
 }
 
+void Costmap3DQuery::addPCLPolygonToFCLTriangles(
+    const pcl::Vertices& polygon,
+    std::vector<fcl::Triangle>* fcl_triangles)
+{
+  // Assume the polygons are convex. Break them into triangles.
+  const std::size_t zero_index = polygon.vertices[0];
+  for (int i=1; i < polygon.vertices.size() - 1; ++i)
+  {
+    fcl_triangles->push_back(fcl::Triangle(zero_index, polygon.vertices[i], polygon.vertices[i+1]));
+  }
+}
+
+
+void Costmap3DQuery::addPCLPolygonMeshToRobotModel(
+    const pcl::PolygonMesh& pcl_mesh,
+    double padding,
+    FCLRobotModel* robot_model)
+{
+  pcl::PointCloud<pcl::PointXYZ> mesh_points;
+  pcl::fromPCLPointCloud2(pcl_mesh.cloud, mesh_points);
+
+  std::vector<fcl::Vector3<FCLFloat>> fcl_points;
+  std::vector<fcl::Triangle> fcl_triangles;
+
+  for (auto pcl_point : mesh_points)
+  {
+    fcl_points.push_back(padPCLPointToFCL(pcl_point, padding));
+  }
+
+  for (auto polygon : pcl_mesh.polygons)
+  {
+    addPCLPolygonToFCLTriangles(polygon, &fcl_triangles);
+  }
+
+  robot_model->addSubModel(fcl_points, fcl_triangles);
+}
+
 void Costmap3DQuery::updateMeshResource(const std::string& mesh_resource, double padding)
 {
   std::string filename = getFileNameFromPackageURL(mesh_resource);
@@ -160,33 +197,9 @@ void Costmap3DQuery::updateMeshResource(const std::string& mesh_resource, double
                      << " query object will always return collision!");
     return;
   }
-  pcl::PointCloud<pcl::PointXYZ>::Ptr mesh_points(new pcl::PointCloud<pcl::PointXYZ>);
-  pcl::fromPCLPointCloud2(mesh.cloud, *mesh_points);
-
-  // Convert the PCL PolygonMesh to the FCL BVHModel applying padding
-  std::vector<fcl::Vector3<FCLFloat>> fcl_points;
-  std::vector<fcl::Triangle> fcl_triangles;
-  for (auto pcl_point : *mesh_points)
-  {
-    // Apply padding very naively. To finely control padding, just use an alternate mesh
-    FCLFloat x = pcl_point.x > 0 ? pcl_point.x + padding : pcl_point.x - padding;
-    FCLFloat y = pcl_point.y > 0 ? pcl_point.y + padding : pcl_point.y - padding;
-    FCLFloat z = pcl_point.z > 0 ? pcl_point.z + padding : pcl_point.z - padding;
-
-    fcl_points.push_back(fcl::Vector3<FCLFloat>(x, y, z));
-  }
-  for (auto polygon : mesh.polygons)
-  {
-    // Assume the polygons are convex. Break them into triangles.
-    const std::size_t zero_index = polygon.vertices[0];
-    for (int i=1; i < polygon.vertices.size() - 1; ++i)
-    {
-      fcl_triangles.push_back(fcl::Triangle(zero_index, polygon.vertices[i], polygon.vertices[i+1]));
-    }
-  }
   robot_model_.reset(new FCLRobotModel());
   robot_model_->beginModel();
-  robot_model_->addSubModel(fcl_points, fcl_triangles);
+  addPCLPolygonMeshToRobotModel(mesh, padding, robot_model_.get());
   robot_model_->endModel();
   robot_obj_ = FCLCollisionObjectPtr(new FCLCollisionObject(robot_model_));
 }

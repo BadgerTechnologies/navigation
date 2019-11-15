@@ -45,6 +45,8 @@
 #include <fcl/geometry/shape/utility.h>
 #include <fcl/narrowphase/collision_object.h>
 #include <fcl/narrowphase/distance.h>
+#include <pcl/point_types.h>
+#include <pcl/PolygonMesh.h>
 #include <geometry_msgs/Pose.h>
 #include <tf2/utils.h>
 #include <costmap_3d/layered_costmap_3d.h>
@@ -181,6 +183,32 @@ private:
     return robot_obj_;
   }
   inline const FCLCollisionObjectPtr& getWorldCollisionObject() { return world_obj_; }
+
+  // Apply padding to a point coordinate
+  inline FCLFloat padPointCoordinate(FCLFloat c, double padding)
+  {
+    return c > 0.0 ? c + padding : c < 0.0 ? c - padding : c;
+  }
+
+  // Apply padding and convert PCL point to FCL
+  inline fcl::Vector3<FCLFloat> padPCLPointToFCL(const pcl::PointXYZ& p, double padding)
+  {
+    return fcl::Vector3<FCLFloat>(
+        padPointCoordinate(p.x, padding),
+        padPointCoordinate(p.y, padding),
+        padPointCoordinate(p.z, padding));
+  }
+
+  // Add fcl triangles to the mesh vector for all triangles in a PCL polygon
+  void addPCLPolygonToFCLTriangles(
+      const pcl::Vertices& polygon,
+      std::vector<fcl::Triangle>* fcl_triangles);
+
+  // Add a padded PCL mesh into the given robot model
+  void addPCLPolygonMeshToRobotModel(
+      const pcl::PolygonMesh& pcl_mesh,
+      double padding,
+      FCLRobotModel* robot_model);
 
   class DistanceCacheKey
   {
