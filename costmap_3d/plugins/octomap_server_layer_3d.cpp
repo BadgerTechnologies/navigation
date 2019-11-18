@@ -255,7 +255,8 @@ void OctomapServerLayer3D::mapUpdateCallback(const octomap_msgs::OctomapUpdateCo
     if (last_seq_ + 1 < map_update_msg->octomap_bounds.header.seq)
     {
       ROS_WARN("Lost an update message, resubscribing to get entire map.");
-      ROS_INFO_STREAM("Expected sequence number " << last_seq_ + 1 << " but received " << map_update_msg->header.seq);
+      ROS_INFO_STREAM("Expected sequence number " << last_seq_ + 1 << " but received "
+                      << map_update_msg->octomap_bounds.header.seq);
       unsubscribeUpdatesUnlocked();
       subscribeUpdatesUnlocked();
       return;
