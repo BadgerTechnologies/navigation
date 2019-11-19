@@ -45,6 +45,7 @@ namespace costmap_3d
 
 PointCloudLayer3D::PointCloudLayer3D() : super()
 {
+  current_ = false;
 }
 
 PointCloudLayer3D::~PointCloudLayer3D()
@@ -62,6 +63,8 @@ void PointCloudLayer3D::initialize(LayeredCostmap3D* parent, std::string name, t
   cloud_has_intensity_ = pnh_.param("cloud_has_intensity", false);
   free_intensity_ = pnh_.param("free_intensity", 0.0);
   lethal_intensity_ = pnh_.param("lethal_intensity", 1.0);
+  double data_valid_duration = pnh_.param("data_valid_duration", 0.0);
+  data_valid_duration_ = ros::Duration(data_valid_duration);
 
   ROS_INFO_STREAM("PointCloudLayer3D " << name << ": initializing");
   ROS_INFO_STREAM("  cloud_topic: " << cloud_topic_);
@@ -85,6 +88,29 @@ void PointCloudLayer3D::reconfigureCallback(costmap_3d::GenericPluginConfig &con
   enabled_ = config.enabled;
   combination_method_ = config.combination_method;
 }
+
+void PointCloudLayer3D::updateBounds(
+    const geometry_msgs::Pose robot_pose,
+    const geometry_msgs::Point& rolled_min,
+    const geometry_msgs::Point& rolled_max,
+    Costmap3D* bounds_map)
+{
+  std::lock_guard<Layer3D> lock(*this);
+  bool current = true;
+  if (data_valid_duration_ > ros::Duration(0.0))
+  {
+    if (ros::Time::now() - last_update_stamp_ > data_valid_duration_)
+    {
+      ROS_WARN_STREAM_THROTTLE(1.0, "Layer " << name_ << " point cloud not updated for "
+                               << (ros::Time::now() - last_update_stamp_).toSec()
+                               << " expected update in at least " <<  data_valid_duration_.toSec());
+      current = false;
+    }
+  }
+  current_ = current;
+  super::updateBounds(robot_pose, rolled_min, rolled_max, bounds_map);
+}
+
 
 void PointCloudLayer3D::deactivate()
 {
@@ -168,6 +194,7 @@ void PointCloudLayer3D::pointCloudCallback(const typename CloudType::ConstPtr& c
   std::lock_guard<Layer3D> lock(*this);
   if (active_ && costmap_)
   {
+    last_update_stamp_ = stamp;
     Costmap3D new_cells(costmap_->getResolution());
     for (auto pt : cloud_msg->points)
     {

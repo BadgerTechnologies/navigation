@@ -45,6 +45,8 @@ namespace costmap_3d
 
 Costmap3DTo2DLayer3D::Costmap3DTo2DLayer3D()
 {
+  // This layer is always current
+  current_ = true;
 }
 
 Costmap3DTo2DLayer3D::~Costmap3DTo2DLayer3D()
