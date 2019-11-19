@@ -47,6 +47,7 @@ namespace costmap_3d
 
 OctomapServerLayer3D::OctomapServerLayer3D() : super(), using_updates_(false)
 {
+  current_ = false;
 }
 
 OctomapServerLayer3D::~OctomapServerLayer3D()
@@ -75,12 +76,16 @@ void OctomapServerLayer3D::initialize(LayeredCostmap3D* parent, std::string name
   erase_bbx_srv_name_ = srv_prefix + "erase_bbx";
   map_topic_ = pnh_.param("map_topic", topic_prefix + "octomap_binary");
   map_update_topic_ = pnh_.param("map_update_topic", map_topic_ + "_updates");
+  double data_valid_duration = pnh_.param("data_valid_duration", 0.0);
+  data_valid_duration_ = ros::Duration(data_valid_duration);
 
   ROS_INFO_STREAM("OctomapServerLayer3D " << name << ": initializing");
   ROS_INFO_STREAM("  map_topic: " << map_topic_);
   ROS_INFO_STREAM("  map_update_topic: " << map_update_topic_);
   ROS_INFO_STREAM("  reset_srv_name: " << reset_srv_name_);
   ROS_INFO_STREAM("  erase_bbx_srv_name: " << erase_bbx_srv_name_);
+  if (data_valid_duration > 0.0)
+    ROS_INFO_STREAM("  data_valid_duration: " << data_valid_duration);
 
   dsrv_.reset(new dynamic_reconfigure::Server<costmap_3d::GenericPluginConfig>(pnh_));
   dsrv_->setCallback(std::bind(&OctomapServerLayer3D::reconfigureCallback, this,
@@ -105,6 +110,28 @@ void OctomapServerLayer3D::reconfigureCallback(costmap_3d::GenericPluginConfig &
     if (costmap_) touch(*costmap_);
   }
   combination_method_ = config.combination_method;
+}
+
+void OctomapServerLayer3D::updateBounds(
+    const geometry_msgs::Pose robot_pose,
+    const geometry_msgs::Point& rolled_min,
+    const geometry_msgs::Point& rolled_max,
+    Costmap3D* bounds_map)
+{
+  std::lock_guard<Layer3D> lock(*this);
+  bool current = true;
+  if (data_valid_duration_ > ros::Duration(0.0))
+  {
+    if (ros::Time::now() - last_update_stamp_ > data_valid_duration_)
+    {
+      ROS_WARN_STREAM_THROTTLE(1.0, "Layer " << name_ << " octomap not updated for "
+                               << (ros::Time::now() - last_update_stamp_).toSec()
+                               << " expected update in at least " <<  data_valid_duration_.toSec());
+      current = false;
+    }
+  }
+  current_ = current;
+  super::updateBounds(robot_pose, rolled_min, rolled_max, bounds_map);
 }
 
 void OctomapServerLayer3D::deactivate()
@@ -172,6 +199,8 @@ void OctomapServerLayer3D::unsubscribeUpdatesUnlocked()
 
 void OctomapServerLayer3D::reset()
 {
+  std::lock_guard<Layer3D> lock(*this);
+
   super::reset();
 
   // reset octomap server
@@ -185,6 +214,11 @@ void OctomapServerLayer3D::reset()
     ROS_WARN_STREAM_THROTTLE(1.0, "OctomapServerLayer3D " << name_ <<
                              ": Unable to call octomap server's reset service");
   }
+
+  // Keep the layer non-current until the first map update cycle after the
+  // first data message is received to keep from driving blind.
+  current_ = false;
+  last_update_stamp_ = ros::Time(0.0);
 }
 
 void OctomapServerLayer3D::resetBoundingBoxUnlocked(Costmap3DIndex min, Costmap3DIndex max)
@@ -203,6 +237,11 @@ void OctomapServerLayer3D::resetBoundingBoxUnlocked(Costmap3DIndex min, Costmap3
     ROS_WARN_STREAM_THROTTLE(1.0, "OctomapServerLayer3D " << name_ <<
                              ": Unable to call octomap server's erase_bbx service");
   }
+
+  // Keep the layer non-current until the first map update cycle after the
+  // first data message is received to keep from driving blind.
+  current_ = false;
+  last_update_stamp_ = ros::Time(0.0);
 };
 
 void OctomapServerLayer3D::matchSize(const geometry_msgs::Point& min, const geometry_msgs::Point& max, double resolution)
@@ -286,7 +325,7 @@ void OctomapServerLayer3D::mapUpdateInternal(const octomap_msgs::Octomap* map_ms
   if (!changed_cells_ || !costmap_)
   {
     // No costmap to update yet
-    ROS_WARN_STREAM_THROTTLE(1.0, "OctomapServerLayer3D " << name_ << ": received non-binary map, ignoring");
+    ROS_WARN_STREAM_THROTTLE(1.0, "OctomapServerLayer3D " << name_ << ": received update before costmap was setup, ignoring");
     return;
   }
 
@@ -334,6 +373,7 @@ void OctomapServerLayer3D::mapUpdateInternal(const octomap_msgs::Octomap* map_ms
     else
     {
       ROS_DEBUG_STREAM("received value octomap with size " << map->size());
+      last_update_stamp_ = map_msg->header.stamp;
       std::shared_ptr<octomap::AbstractOcTree> abstract_bounds_map;
       if (bounds_msg != nullptr)
       {

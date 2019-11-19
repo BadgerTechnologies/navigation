@@ -56,6 +56,11 @@ public:
 
   virtual void initialize(LayeredCostmap3D* parent, std::string name, tf::TransformListener *tf);
 
+  virtual void updateBounds(const geometry_msgs::Pose robot_pose,
+                            const geometry_msgs::Point& rolled_min,
+                            const geometry_msgs::Point& rolled_max,
+                            Costmap3D* bounds_map);
+
   /** @brief Deactivate this layer, unsubscribing.
    */
   virtual void deactivate();
@@ -100,6 +105,8 @@ protected:
   bool active_;
   bool first_map_update_received_;
   uint32_t last_seq_;
+  ros::Duration data_valid_duration_;
+  ros::Time last_update_stamp_;
 };
 
 }  // namespace costmap_3d

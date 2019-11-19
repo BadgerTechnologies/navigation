@@ -63,6 +63,11 @@ public:
 
   virtual void initialize(LayeredCostmap3D* parent, std::string name, tf::TransformListener *tf);
 
+  virtual void updateBounds(const geometry_msgs::Pose robot_pose,
+                            const geometry_msgs::Point& rolled_min,
+                            const geometry_msgs::Point& rolled_max,
+                            Costmap3D* bounds_map);
+
   /** @brief Deactivate this layer, unsubscribing.
    */
   virtual void deactivate();
@@ -93,6 +98,8 @@ protected:
   // Intensity values between free_intensity_ and lethal_intesnity_ are linearly interpolated.
   float free_intensity_;
   float lethal_intensity_;
+  ros::Duration data_valid_duration_;
+  ros::Time last_update_stamp_;
 };
 
 }  // namespace costmap_3d
