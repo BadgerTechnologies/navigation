@@ -264,6 +264,13 @@ bool Costmap3DQuery::footprintCollision(geometry_msgs::Pose pose)
   checkCostmap();
   assert(world_obj_);
 
+  // FCL does not correctly handle an empty octomap.
+  if (octree_ptr_->size() == 0)
+  {
+    // There is nothing to collide, so there will be no collision
+    return false;
+  }
+
   FCLCollisionObjectPtr robot(getRobotCollisionObject(pose));
   FCLCollisionObjectPtr world(getWorldCollisionObject());
 
@@ -285,6 +292,12 @@ double Costmap3DQuery::footprintDistance(geometry_msgs::Pose pose)
   }
   checkCostmap();
   assert(world_obj_);
+
+  // FCL does not correctly handle an empty octomap.
+  if (octree_ptr_->size() == 0)
+  {
+    return std::numeric_limits<double>::max();
+  }
 
   FCLCollisionObjectPtr robot(getRobotCollisionObject(pose));
   FCLCollisionObjectPtr world(getWorldCollisionObject());
@@ -351,6 +364,13 @@ double Costmap3DQuery::footprintSignedDistance(geometry_msgs::Pose pose)
   // TODO: Figure out how to apply distance cache to signed distance.
   // TODO: Think about how to make this work w/ meshes representing a solid and octomaps
   assert(world_obj_);
+
+  // FCL does not correctly handle an empty octomap.
+  if (octree_ptr_->size() == 0)
+  {
+    return std::numeric_limits<double>::max();
+  }
+
   FCLCollisionObjectPtr robot(getRobotCollisionObject(pose));
   FCLCollisionObjectPtr world(getWorldCollisionObject());
 
