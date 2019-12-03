@@ -46,8 +46,6 @@ Costmap3DPublisher::Costmap3DPublisher(const ros::NodeHandle& nh,
     : nh_(nh), layered_costmap_3d_(layered_costmap_3d)
 {
   costmap_pub_ = nh_.advertise<octomap_msgs::Octomap>(topic_name, 1);
-  // Queue size needs to be at least 2 in order to handle sending full map
-  // followed by first update, since first full map has no sequence number.
   costmap_update_pub_ = nh_.advertise<octomap_msgs::OctomapUpdate>(topic_name + "_updates", 3,
                                                       std::bind(&Costmap3DPublisher::connectCallback, this,
                                                                 std::placeholders::_1));
