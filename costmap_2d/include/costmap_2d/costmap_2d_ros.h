@@ -81,6 +81,8 @@ public:
   Costmap2DROS(std::string name, tf::TransformListener& tf);
   virtual ~Costmap2DROS();
 
+  virtual const std::string& getName() { return name_; }
+
   /**
    * @brief  Subscribes to sensor topics if necessary and starts costmap
    * updates, can be called to restart the costmap after calls to either
