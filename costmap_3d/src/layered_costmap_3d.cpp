@@ -73,20 +73,6 @@ void LayeredCostmap3D::updateMap(geometry_msgs::Pose robot_pose)
   }
 
   Costmap3D bounds_map(costmap_->getResolution());
-  Costmap3D deleted_map(costmap_->getResolution());
-
-  if (size_changed_)
-  {
-    // Treat the entire map as changed to pull in any data that is
-    // immediately ready in the plugins. Some plugins may represent data in
-    // a way that is resolution-independent and may already have data on the
-    // next updateCosts call. We could use a NULL value in setTreeValues for
-    // the bounds map, but we must call updateBounds on every cycle to
-    // preserve the API to the plugins, and must pass a valid bounds map
-    // pointer, so make the bounds map represent the entire universe.
-    bounds_map.setNodeValueAtDepth(Costmap3DIndex(), 0, LETHAL);
-    size_changed_ = false;
-  }
 
   // Calculate the current aabb (most useful for rolling maps).
   octomap::point3d aabb_min = toOctomapPoint(min_point_);
@@ -108,15 +94,6 @@ void LayeredCostmap3D::updateMap(geometry_msgs::Pose robot_pose)
   const geometry_msgs::Point max_msg(fromOctomapPoint(aabb_max));
 
   ROS_DEBUG_STREAM("LayeredCostmap3D: updateMap: min point " << min_msg << " max point " << max_msg);
-  // Go ahead and delete any out-of-bounds information from our costmap.
-  // Save any cells that are deleted to use when publishing the update.
-  costmap_->deleteAABB(aabb_min, aabb_max, true,
-                       std::bind([](Costmap3D* tree, const Costmap3DIndex& key, unsigned int depth)
-                                 {tree->setNodeValueAtDepth(key, depth, LETHAL);},
-                                 &deleted_map,
-                                 std::placeholders::_3,
-                                 std::placeholders::_4));
-
 
   {
     // lock all the costmap layers
@@ -127,10 +104,23 @@ void LayeredCostmap3D::updateMap(geometry_msgs::Pose robot_pose)
       plugin->updateBounds(robot_pose, min_msg, max_msg, &bounds_map);
     }
 
+    if (size_changed_)
+    {
+      // Treat the entire map as changed to pull in any data that is
+      // immediately ready in the plugins. Some plugins may represent data in
+      // a way that is resolution-independent and may already have data on the
+      // next updateCosts call. We could use a NULL value in setTreeValues for
+      // the bounds map, but we must call updateBounds on every cycle to
+      // preserve the API to the plugins, and must pass a valid bounds map
+      // pointer, so make the bounds map represent the entire universe.
+      bounds_map.setNodeValueAtDepth(Costmap3DIndex(), 0, LETHAL);
+    }
+
     // Remove any out-of-bounds entries from the bounds map.
     // This will prevent layers from copying back any data that is
     // out-of-bounds below.
     bounds_map.deleteAABB(aabb_min, aabb_max, true);
+
     // Delete the current cells that are being updated.
     costmap_->setTreeValues(NULL, &bounds_map, false, true);
 
@@ -141,10 +131,27 @@ void LayeredCostmap3D::updateMap(geometry_msgs::Pose robot_pose)
     }
   }
 
+  // Delete any out-of-bounds information from our costmap.
+  // Do this after updateCosts to ensure no out-of-bounds information remains
+  // from an errant layer that ignores the bounds map.
+  // Set any cells that are deleted in the bounds map to use when publishing the update.
+  costmap_->deleteAABB(aabb_min, aabb_max, true,
+                       std::bind([](Costmap3D* tree, const Costmap3DIndex& key, unsigned int depth)
+                                 {tree->setNodeValueAtDepth(key, depth, LETHAL);},
+                                 &bounds_map,
+                                 std::placeholders::_3,
+                                 std::placeholders::_4));
+
+  if (size_changed_)
+  {
+    // Any old values that were deleted during the size change will get
+    // stuck if we do not publish a full map here. Just use the univeral
+    // bounds for the bounds_map if the size has changed.
+    bounds_map.setNodeValueAtDepth(Costmap3DIndex(), 0, LETHAL);
+    size_changed_ = false;
+  }
+
   // Calculate the update to publish
-  // Re-use the bounds-map. Add to it any cells we deleted that became
-  // out-of-bounds.
-  bounds_map.setTreeValues(&deleted_map);
   Costmap3D map_delta(costmap_->getResolution());
   map_delta.setTreeValues(costmap_.get(), &bounds_map, false, false);
 
