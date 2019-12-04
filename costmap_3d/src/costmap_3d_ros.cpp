@@ -216,21 +216,38 @@ std::set<std::string> Costmap3DROS::getLayerNames()
 
 void Costmap3DROS::resetBoundingBox(geometry_msgs::Point min, geometry_msgs::Point max, const std::set<std::string>& layers)
 {
-  super::resetBoundingBox(min, max, layers);
-
-  std::lock_guard<LayeredCostmap3D> lock(layered_costmap_3d_);
-
-  for (auto plugin : layered_costmap_3d_.getPlugins())
   {
-    // Only reset layers that are in the layers list argument.
-    // This is not super efficient if the number of layers is large.
-    // If the number of layers ever became large, we should store an index to
-    // them by name.
-    if (layers.find(plugin->getName()) != layers.end())
+    // Its not OK to hold the lock while calling super::resetBoundingBox even
+    // though the lock is recursive because it will break the condition variable
+    // wait.
+    std::lock_guard<LayeredCostmap3D> lock(layered_costmap_3d_);
+
+    // Reset all 3D layers first, then 2D layers, because Costmap2DROS
+    // resetBoundingBox waits for the next update
+    for (auto plugin : layered_costmap_3d_.getPlugins())
     {
-      plugin->resetBoundingBox(min, max);
+      // Only reset layers that are in the layer set
+      // Match either the whole layer name, or just the final name after the
+      // final '/'.
+      const std::string& plugin_full_name(plugin->getName());
+      std::string plugin_last_name_only;
+      int slash = plugin_full_name.rfind('/');
+      if( slash != std::string::npos )
+      {
+        plugin_last_name_only = plugin_full_name.substr(slash+1);
+      }
+      ROS_INFO_STREAM("resetBoundingBox consider 3D layer: " << plugin_full_name <<
+                      " last name: " << plugin_last_name_only);
+      if (layers.find(plugin_full_name) != layers.end()
+          || plugin_last_name_only.size() > 0 && layers.find(plugin_last_name_only) != layers.end())
+      {
+        ROS_INFO_STREAM("resetBoundingBox 3D layer " << plugin->getName());
+        plugin->resetBoundingBox(min, max);
+      }
     }
   }
+
+  super::resetBoundingBox(min, max, layers);
 }
 
 const std::string& Costmap3DROS::getFootprintMeshResource(const std::string& alt_mesh)
