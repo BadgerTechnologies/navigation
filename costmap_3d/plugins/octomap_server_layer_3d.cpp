@@ -178,7 +178,8 @@ void OctomapServerLayer3D::subscribe()
 
 void OctomapServerLayer3D::subscribeUpdatesUnlocked()
 {
-  first_map_update_received_ = false;
+  first_full_map_update_received_ = false;
+  num_map_updates_ = 0;
   map_update_sub_ = pnh_.subscribe<octomap_msgs::OctomapUpdate>(map_update_topic_, 10,
                                                                 std::bind(&OctomapServerLayer3D::mapUpdateCallback,
                                                                           this, std::placeholders::_1));
@@ -275,19 +276,32 @@ void OctomapServerLayer3D::mapUpdateCallback(const octomap_msgs::OctomapUpdateCo
     // callback. Throw this message away.
     return;
   }
-  if (!first_map_update_received_)
+  num_map_updates_++;
+  if (!first_full_map_update_received_)
   {
     // Check if this the full map published by the connect callback.
     // That map is signaled by having the octomap_bounds seq be different
     // from the octomap_update seq.
-    // Ignore any normal published update until the first full map
+    // Ignore the first normal published update until the first full map
     // is received.
-    if (map_update_msg->octomap_bounds.header.seq == map_update_msg->octomap_update.header.seq)
+    if (num_map_updates_ == 1 &&
+        map_update_msg->octomap_bounds.header.seq == map_update_msg->octomap_update.header.seq)
     {
-      // Ignore this normal update until the first full map is received.
+      // Ignore the first normal update until the first full map is received.
+      // There is a race where this may happen, and we must simply ignore the
+      // first.
       return;
     }
-    first_map_update_received_ = true;
+    else if(num_map_updates_ > 1)
+    {
+      // Huh. We never got the first full map, this means we lost that
+      // message. We have no choice but to re-subscribe.
+      ROS_WARN("Lost first full map update message, resubscribing.");
+      unsubscribeUpdatesUnlocked();
+      subscribeUpdatesUnlocked();
+      return;
+    }
+    first_full_map_update_received_ = true;
   }
   else
   {
