@@ -586,7 +586,17 @@ void Costmap2DROS::resetBoundingBox(geometry_msgs::Point min, geometry_msgs::Poi
   for (vector<boost::shared_ptr<Layer> >::iterator plugin = plugins->begin(); plugin != plugins->end(); ++plugin)
   {
     // Only reset layers that are in the layer set
-    if (layers.find((*plugin)->getName()) != layers.end())
+    // Match either the whole layer name, or just the final name after the
+    // final '/'.
+    const std::string& plugin_full_name((*plugin)->getName());
+    std::string plugin_last_name_only;
+    int slash = plugin_full_name.rfind('/');
+    if( slash != std::string::npos )
+    {
+      plugin_last_name_only = plugin_full_name.substr(slash+1);
+    }
+    if (layers.find(plugin_full_name) != layers.end()
+        || plugin_last_name_only.size() > 0 && layers.find(plugin_last_name_only) != layers.end())
     {
       boost::shared_ptr<CostmapLayer> costmap_layer(boost::dynamic_pointer_cast<CostmapLayer>((*plugin)));
       if (costmap_layer)
