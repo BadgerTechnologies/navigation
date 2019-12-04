@@ -213,6 +213,7 @@ bool LayeredCostmap3D::isCurrent() const
   {
     if (!plugin->isCurrent())
     {
+      ROS_INFO_STREAM_THROTTLE(1.0, "LayeredCostmap3D layer " << plugin->getName() << " is not current");
       return false;
     }
   }
