@@ -204,7 +204,6 @@ protected:
 
   Costmap3DPtr costmap_;
   Costmap3DPtr changed_cells_;
-  bool current_;
   bool enabled_;
   int combination_method_;
 };
