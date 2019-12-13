@@ -154,6 +154,9 @@ protected:
   /** @brief Update the mesh to use for queries. */
   virtual void updateMeshResource(const std::string& mesh_resource, double padding = 0.0);
 
+  /** @brief core of distance calculations */
+  virtual double calculateDistance(geometry_msgs::Pose pose, bool signed_distance = false);
+
 private:
   // returns path to package file, or empty on error
   std::string getFileNameFromPackageURL(const std::string& url);
@@ -325,7 +328,7 @@ private:
       result->primitive2 = mesh_triangle;
       result->tf1 = octomap_box_tf;
     }
-    FCLFloat distanceToNewPose(geometry_msgs::Pose pose)
+    FCLFloat distanceToNewPose(geometry_msgs::Pose pose, bool signed_distance=false) const
     {
       // Turn pose into tf
       fcl::Transform3<FCLFloat> new_tf(
@@ -337,10 +340,19 @@ private:
 
       FCLFloat dist;
       fcl::detail::GJKSolver_libccd<FCLFloat> solver;
-      fcl::Vector3<FCLFloat> p1, p2;
-      solver.shapeTriangleDistance(*octomap_box, octomap_box_tf,
-                                   mesh_triangle->a, mesh_triangle->b, mesh_triangle->c, new_tf,
-                                   &dist, &p1, &p2);
+      if (signed_distance)
+      {
+        fcl::TriangleP<FCLFloat> triangle(mesh_triangle->a, mesh_triangle->b, mesh_triangle->c);
+        solver.shapeSignedDistance(*octomap_box, octomap_box_tf,
+                                   triangle, new_tf,
+                                   &dist);
+      }
+      else
+      {
+        solver.shapeTriangleDistance(*octomap_box, octomap_box_tf,
+                                     mesh_triangle->a, mesh_triangle->b, mesh_triangle->c, new_tf,
+                                     &dist);
+      }
       return dist;
     }
     std::shared_ptr<fcl::Box<FCLFloat>> octomap_box;

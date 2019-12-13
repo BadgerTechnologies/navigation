@@ -282,7 +282,7 @@ bool Costmap3DQuery::footprintCollision(geometry_msgs::Pose pose)
   return result.isCollision();
 }
 
-double Costmap3DQuery::footprintDistance(geometry_msgs::Pose pose)
+double Costmap3DQuery::calculateDistance(geometry_msgs::Pose pose, bool signed_distance)
 {
   if (!robot_obj_)
   {
@@ -309,7 +309,7 @@ double Costmap3DQuery::footprintDistance(geometry_msgs::Pose pose)
   auto micro_cache_entry = micro_distance_cache_.find(micro_cache_key);
   if (micro_cache_entry != micro_distance_cache_.end())
   {
-    return micro_cache_entry->second.distanceToNewPose(pose);
+    return micro_cache_entry->second.distanceToNewPose(pose, signed_distance);
   }
 
   fcl::DistanceRequest<FCLFloat> request;
@@ -323,7 +323,8 @@ double Costmap3DQuery::footprintDistance(geometry_msgs::Pose pose)
     // and the octomap box, and use this as our initial guess in the result.
     // This greatly prunes the search tree, yielding a big increase in runtime
     // performance.
-    pose_distance = cache_entry->second.distanceToNewPose(pose);
+    pose_distance = cache_entry->second.distanceToNewPose(pose, signed_distance);
+
     cache_entry->second.setupResult(&result);
   }
   else if(distance_cache_.size() > 0)
@@ -334,11 +335,19 @@ double Costmap3DQuery::footprintDistance(geometry_msgs::Pose pose)
     // a correct upper bound, as the minimum distance must be less or equal to
     // the mesh triangle at the new pose and the old nearest octomap cell.
     auto begin = distance_cache_.begin();
-    pose_distance = begin->second.distanceToNewPose(pose);
+    pose_distance = begin->second.distanceToNewPose(pose, signed_distance);
     begin->second.setupResult(&result);
   }
 
   request.enable_nearest_points = true;
+  if (signed_distance)
+  {
+    request.enable_signed_distance = true;
+  }
+  else
+  {
+    request.enable_signed_distance = false;
+  }
 
   result.min_distance = pose_distance;
 
@@ -349,37 +358,28 @@ double Costmap3DQuery::footprintDistance(geometry_msgs::Pose pose)
   distance_cache_[cache_key] = new_entry;
   micro_distance_cache_[micro_cache_key] = new_entry;
 
+  // FCL has a bug where it always returns -1.0 for signed distance for
+  // octree-mesh, so re-calculate a signed distance if requested in the case
+  // of a collision using the colliding primitives. This isn't exactly
+  // correct, as it would be more correct to search all the collisions for the
+  // worst penetration. However, it is better for costmap query to return
+  // some sort of signed distance than always just returning -1.0
+  if (signed_distance && distance == -1.0)
+  {
+    distance = new_entry.distanceToNewPose(pose, true);
+  }
+
   return distance;
+}
+
+double Costmap3DQuery::footprintDistance(geometry_msgs::Pose pose)
+{
+  return calculateDistance(pose);
 }
 
 double Costmap3DQuery::footprintSignedDistance(geometry_msgs::Pose pose)
 {
-  if (!robot_obj_)
-  {
-    // We failed to create a robot model.
-    // The failure would have been logged, so simply return collision.
-    return -1.0;
-  }
-  checkCostmap();
-  // TODO: Figure out how to apply distance cache to signed distance.
-  // TODO: Think about how to make this work w/ meshes representing a solid and octomaps
-  assert(world_obj_);
-
-  // FCL does not correctly handle an empty octomap.
-  if (octree_ptr_->size() == 0)
-  {
-    return std::numeric_limits<double>::max();
-  }
-
-  FCLCollisionObjectPtr robot(getRobotCollisionObject(pose));
-  FCLCollisionObjectPtr world(getWorldCollisionObject());
-
-  fcl::DistanceRequest<FCLFloat> request;
-  fcl::DistanceResult<FCLFloat> result;
-
-  request.enable_signed_distance = true;
-
-  return fcl::distance(world.get(), robot.get(), request, result);
+  return calculateDistance(pose, true);
 }
 
 }  // namespace costmap_3d
