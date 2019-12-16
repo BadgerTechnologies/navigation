@@ -358,18 +358,35 @@ double Costmap3DQuery::calculateDistance(geometry_msgs::Pose pose, bool signed_d
   upgrade_lock.unlock();
 
   request.enable_nearest_points = true;
-  if (signed_distance)
-  {
-    request.enable_signed_distance = true;
-  }
-  else
-  {
-    request.enable_signed_distance = false;
-  }
+  // We will emulate signed distance ourselves, as FCL only emulates it anyway,
+  // and for costmap query purposes, only getting one of the penetrations is
+  // good enough (not the most maximal).
+  request.enable_signed_distance = false;
 
   result.min_distance = pose_distance;
 
-  double distance = fcl::distance(world.get(), robot.get(), request, result);
+  double distance;
+
+  if (pose_distance <= 0.0)
+  {
+    // The cached objects collided at the new pose.
+    // FCL distance (signed or unsigned) between a mesh and octree
+    // is not guaranteed to give the most negative distance in such cases,
+    // as it stops as soon as a collision is found (due to the potentially very
+    // large number of collisions). For the costmap use case, it isn't
+    // super important that the most negative signed distance be found in the
+    // signed case, as generally the use case for finding signed distance
+    // is as an estimate of cost to move the robot to a pose, making it worse
+    // to penetrate slightly more. In such cases, the main thing is that the
+    // negative depth be one of the collisions, not necessarily the worst.
+    // In the non-signed case, there is clearly nothing more to calculate, as
+    // we already have a collision.
+    distance = pose_distance;
+  }
+  else
+  {
+    distance = fcl::distance(world.get(), robot.get(), request, result);
+  }
 
   // Update distance caches
   const DistanceCacheEntry& new_entry = DistanceCacheEntry(result);
@@ -380,13 +397,10 @@ double Costmap3DQuery::calculateDistance(geometry_msgs::Pose pose, bool signed_d
     micro_distance_cache_[micro_cache_key] = new_entry;
   }
 
-  // FCL has a bug where it always returns -1.0 for signed distance for
-  // octree-mesh, so re-calculate a signed distance if requested in the case
-  // of a collision using the colliding primitives. This isn't exactly
-  // correct, as it would be more correct to search all the collisions for the
-  // worst penetration. However, it is better for costmap query to return
-  // some sort of signed distance than always just returning -1.0
-  if (signed_distance && distance == -1.0)
+  // Emulate signed distance in a similar way as FCL. FCL re-does the whole
+  // tree/BVH collision, but we already know the colliding primitives, so save
+  // time by calculating their penetration depth directly.
+  if (signed_distance && distance < 0.0)
   {
     distance = new_entry.distanceToNewPose(pose, true);
   }
