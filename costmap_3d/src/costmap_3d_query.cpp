@@ -54,11 +54,15 @@ Costmap3DQuery::Costmap3DQuery(
     double padding,
     unsigned int pose_bins_per_meter,
     unsigned int pose_bins_per_radian,
+    unsigned int pose_milli_bins_per_meter,
+    unsigned int pose_milli_bins_per_radian,
     unsigned int pose_micro_bins_per_meter,
     unsigned int pose_micro_bins_per_radian)
   : layered_costmap_3d_(layered_costmap_3d),
     pose_bins_per_meter_(pose_bins_per_meter),
     pose_bins_per_radian_(pose_bins_per_radian),
+    pose_milli_bins_per_meter_(pose_milli_bins_per_meter),
+    pose_milli_bins_per_radian_(pose_milli_bins_per_radian),
     pose_micro_bins_per_meter_(pose_micro_bins_per_meter),
     pose_micro_bins_per_radian_(pose_micro_bins_per_radian)
 {
@@ -70,11 +74,15 @@ Costmap3DQuery::Costmap3DQuery(const Costmap3DConstPtr& costmap_3d,
     double padding,
     unsigned int pose_bins_per_meter,
     unsigned int pose_bins_per_radian,
+    unsigned int pose_milli_bins_per_meter,
+    unsigned int pose_milli_bins_per_radian,
     unsigned int pose_micro_bins_per_meter,
     unsigned int pose_micro_bins_per_radian)
   : layered_costmap_3d_(nullptr),
     pose_bins_per_meter_(pose_bins_per_meter),
     pose_bins_per_radian_(pose_bins_per_radian),
+    pose_milli_bins_per_meter_(pose_milli_bins_per_meter),
+    pose_milli_bins_per_radian_(pose_milli_bins_per_radian),
     pose_micro_bins_per_meter_(pose_micro_bins_per_meter),
     pose_micro_bins_per_radian_(pose_micro_bins_per_radian)
 {
@@ -134,8 +142,14 @@ void Costmap3DQuery::checkCostmap(Costmap3DQuery::upgrade_lock& upgrade_lock)
       // not change. The only thing that is changing is the costmap. We could go
       // through the delta map and only remove entries that have had the
       // corresponding octomap cell go away. This may be implemented as a future
-      // improvement.
+      // improvement. This is OK since the distance_cache_ can not make the
+      // results incorrect in the presence of a new closer cell, it just makes
+      // the calculation take longer.
       distance_cache_.clear();
+      // We must always drop the milli cache and micro cache, as new cells will
+      // invalidate the old results, and there is no simple way to figure out
+      // which ones might still be valid.
+      milli_distance_cache_.clear();
       micro_distance_cache_.clear();
     }
     last_layered_costmap_update_number_ = layered_costmap_3d_->getNumberOfUpdates();
@@ -283,7 +297,7 @@ double Costmap3DQuery::handleDistanceInteriorCollisions(
 
   // Find the transform from the given octomap box to the robot model at the given pose.
   fcl::Transform3<FCLFloat> map_to_robot_transform(
-      cache_entry.octomap_box_tf * getFCLTransform(pose).inverse());
+      getFCLTransform(pose).inverse() * cache_entry.octomap_box_tf);
 
   // transform the center of the box (which is the origin) into the robot frame
   fcl::Vector3<FCLFloat> box_center(map_to_robot_transform * fcl::Vector3<FCLFloat>::Zero());
@@ -373,6 +387,17 @@ double Costmap3DQuery::calculateDistance(geometry_msgs::Pose pose, bool signed_d
 
   FCLFloat pose_distance = std::numeric_limits<FCLFloat>::max();
 
+  DistanceCacheKey milli_cache_key(pose, pose_milli_bins_per_meter_, pose_milli_bins_per_radian_);
+  auto milli_cache_entry = milli_distance_cache_.find(milli_cache_key);
+  if (milli_cache_entry != milli_distance_cache_.end())
+  {
+    return handleDistanceInteriorCollisions(
+        milli_cache_entry->second.distanceToNewPose(pose, signed_distance),
+        signed_distance,
+        milli_cache_entry->second,
+        pose);
+  }
+
   DistanceCacheKey micro_cache_key(pose, pose_micro_bins_per_meter_, pose_micro_bins_per_radian_);
   // if we hit the micro cache, use the result directly.
   auto micro_cache_entry = micro_distance_cache_.find(micro_cache_key);
@@ -455,14 +480,7 @@ double Costmap3DQuery::calculateDistance(geometry_msgs::Pose pose, bool signed_d
     distance = fcl::distance(world.get(), robot.get(), request, result);
   }
 
-  // Update distance caches
   const DistanceCacheEntry& new_entry = DistanceCacheEntry(result);
-  {
-    // Get write access
-    unique_lock write_lock(upgrade_mutex_);
-    distance_cache_[cache_key] = new_entry;
-    micro_distance_cache_[micro_cache_key] = new_entry;
-  }
 
   // Emulate signed distance in a similar way as FCL. FCL re-does the whole
   // tree/BVH collision, but we already know the colliding primitives, so save
@@ -472,11 +490,25 @@ double Costmap3DQuery::calculateDistance(geometry_msgs::Pose pose, bool signed_d
     distance = new_entry.distanceToNewPose(pose, true);
   }
 
-  return handleDistanceInteriorCollisions(
+  distance = handleDistanceInteriorCollisions(
       distance,
       signed_distance,
       new_entry,
       pose);
+
+  // Update distance caches
+  {
+    // Get write access
+    unique_lock write_lock(upgrade_mutex_);
+    distance_cache_[cache_key] = new_entry;
+    micro_distance_cache_[micro_cache_key] = new_entry;
+    if (distance > milli_cache_threshold_)
+    {
+      milli_distance_cache_[milli_cache_key] = new_entry;
+    }
+  }
+
+  return distance;
 }
 
 double Costmap3DQuery::footprintDistance(geometry_msgs::Pose pose)
