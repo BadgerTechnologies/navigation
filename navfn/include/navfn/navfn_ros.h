@@ -37,6 +37,7 @@
 #ifndef NAVFN_NAVFN_ROS_H_
 #define NAVFN_NAVFN_ROS_H_
 
+#include <memory>
 #include <ros/ros.h>
 #include <navfn/navfn.h>
 #include <costmap_2d/costmap_2d.h>
@@ -49,6 +50,8 @@
 #include <nav_msgs/GetPlan.h>
 #include <navfn/potarr_point.h>
 #include <pcl_ros/publisher.h>
+#include <dynamic_reconfigure/server.h>
+#include <navfn/NavfnROSConfig.h>
 
 namespace navfn {
   /**
@@ -160,6 +163,7 @@ namespace navfn {
       bool makePlanService(nav_msgs::GetPlan::Request& req, nav_msgs::GetPlan::Response& resp);
 
     protected:
+      void reconfigureCB(NavfnROSConfig& config, uint32_t level);
 
       /**
        * @brief Store a copy of the current costmap in \a costmap.  Called by makePlan.
@@ -169,6 +173,7 @@ namespace navfn {
       ros::Publisher plan_pub_;
       pcl_ros::Publisher<PotarrPoint> potarr_pub_;
       bool initialized_, allow_unknown_, visualize_potential_;
+      std::shared_ptr<dynamic_reconfigure::Server<navfn::NavfnROSConfig> > dyncfg_srv_;
 
 
     private:

@@ -14,6 +14,7 @@ find_package(catkin REQUIRED
         roscpp
         tf
         visualization_msgs
+        dynamic_reconfigure
         )
 
 find_package(Eigen3 REQUIRED)
@@ -27,6 +28,11 @@ include_directories(
 )
 add_definitions(${EIGEN3_DEFINITIONS})
 
+set(CMAKE_CXX_STANDARD 11)
+
+generate_dynamic_reconfigure_options(
+    cfg/NavfnROS.cfg
+)
 
 # services
 add_service_files(
@@ -52,6 +58,7 @@ catkin_package(
         nav_core
         roscpp
         pluginlib
+        dynamic_reconfigure
 )
 
 add_library (navfn src/navfn.cpp src/navfn_ros.cpp)
