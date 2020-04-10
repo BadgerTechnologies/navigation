@@ -338,7 +338,7 @@ namespace navfn {
       }
     }
 
-    if (visualize_potential_){
+    if (visualize_potential_ && potarr_pub_.getNumSubscribers() > 0){
       //publish potential array
       pcl::PointCloud<PotarrPoint> pot_area;
       pot_area.header.frame_id = global_frame_;
