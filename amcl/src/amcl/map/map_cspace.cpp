@@ -52,8 +52,8 @@ class CellData
 class CachedDistanceMap
 {
   public:
-    CachedDistanceMap(double scale, double max_dist) : 
-      distances_(NULL), scale_(scale), max_dist_(max_dist) 
+    CachedDistanceMap(double scale, double max_dist) :
+      distances_(NULL), scale_(scale), max_dist_(max_dist)
     {
       cell_radius_ = max_dist / scale;
       distances_ = new double *[cell_radius_+2];
@@ -102,7 +102,7 @@ get_distance_map(double scale, double max_dist)
   return cdm;
 }
 
-void enqueue(map_t* map, unsigned int i, unsigned int j, 
+void enqueue(map_t* map, unsigned int i, unsigned int j,
 	     unsigned int src_i, unsigned int src_j,
 	     std::priority_queue<CellData>& Q,
 	     CachedDistanceMap* cdm,
@@ -171,19 +171,19 @@ void map_update_cspace(map_t *map, double max_occ_dist)
   {
     CellData current_cell = Q.top();
     if(current_cell.i_ > 0)
-      enqueue(map, current_cell.i_-1, current_cell.j_, 
+      enqueue(map, current_cell.i_-1, current_cell.j_,
 	      current_cell.src_i_, current_cell.src_j_,
 	      Q, cdm, marked);
     if(current_cell.j_ > 0)
-      enqueue(map, current_cell.i_, current_cell.j_-1, 
+      enqueue(map, current_cell.i_, current_cell.j_-1,
 	      current_cell.src_i_, current_cell.src_j_,
 	      Q, cdm, marked);
     if((int)current_cell.i_ < map->size_x - 1)
-      enqueue(map, current_cell.i_+1, current_cell.j_, 
+      enqueue(map, current_cell.i_+1, current_cell.j_,
 	      current_cell.src_i_, current_cell.src_j_,
 	      Q, cdm, marked);
     if((int)current_cell.j_ < map->size_y - 1)
-      enqueue(map, current_cell.i_, current_cell.j_+1, 
+      enqueue(map, current_cell.i_, current_cell.j_+1,
 	      current_cell.src_i_, current_cell.src_j_,
 	      Q, cdm, marked);
 

@@ -68,6 +68,9 @@
 #include <rosbag/view.h>
 #include <boost/foreach.hpp>
 
+#include <yaml-cpp/yaml.h>
+#include <badger_file_lib/atomic_ofstream.h>
+
 using namespace amcl;
 
 // Pose hypothesis
@@ -120,6 +123,7 @@ class AmclNode
 
     int process();
     void savePoseToServer();
+    void savePoseToFile();
 
   private:
     tf::TransformBroadcaster* tfb_;
@@ -157,20 +161,31 @@ class AmclNode
     void initialPoseReceived(const geometry_msgs::PoseWithCovarianceStampedConstPtr& msg);
     void handleInitialPoseMessage(const geometry_msgs::PoseWithCovarianceStamped& orig_msg);
     void mapReceived(const nav_msgs::OccupancyGridConstPtr& msg);
+    void attemptSavePose();
 
     void handleMapMessage(const nav_msgs::OccupancyGrid& msg);
     void freeMapDependentMemory();
     map_t* convertMap( const nav_msgs::OccupancyGrid& map_msg );
-    void updatePoseFromServer();
-    void applyInitialPose();
 
-    double getYaw(tf::Pose& t);
+    void loadPose();
+    void publishPose(const geometry_msgs::PoseWithCovarianceStamped& p);
+    void applyInitialPose();
+    bool loadPoseFromServer();
+    bool loadParamFromServer(std::string param_name, double* val);
+    bool loadPoseFromFile();
+    YAML::Node loadYamlFromFile();
+    double getYaw(const tf::Pose& t);
+
+    void publishTransform(const ros::TimerEvent& event);
+    void publishInitialPose();
+    void newInitialPoseSubscriber(const ros::SingleSubscriberPublisher& single_sub_pub);
 
     //parameter for what odom to use
     std::string odom_frame_id_;
 
     //paramater to store latest odom pose
     tf::Stamped<tf::Pose> latest_odom_pose_;
+    geometry_msgs::PoseWithCovarianceStamped latest_amcl_pose_;
 
     //parameter for what base to use
     std::string base_frame_id_;
@@ -181,7 +196,6 @@ class AmclNode
     bool first_map_only_;
     int map_scale_up_factor_;
 
-    ros::Duration gui_publish_period;
     ros::Time save_pose_last_time;
     ros::Duration save_pose_period;
 
@@ -195,9 +209,18 @@ class AmclNode
     message_filters::Subscriber<sensor_msgs::LaserScan>* laser_scan_sub_;
     tf::MessageFilter<sensor_msgs::LaserScan>* laser_scan_filter_;
     ros::Subscriber initial_pose_sub_;
+    ros::Publisher initial_pose_pub_;
     std::vector< AMCLLaser* > lasers_;
     std::vector< bool > lasers_update_;
     std::map< std::string, int > frame_to_laser_;
+
+    ros::Duration transform_publish_period_;
+    ros::Time save_pose_to_server_last_time_;
+    ros::Time save_pose_to_file_last_time_;
+    ros::Duration save_pose_to_server_period_;
+    ros::Duration save_pose_to_file_period_;
+    bool save_pose_;
+    std::string saved_pose_filepath_;
 
     // Particle filter
     pf_t *pf_;
@@ -251,10 +274,10 @@ class AmclNode
     ros::Publisher particlecloud_pub_;
     ros::Publisher alt_pose_pub_;
     ros::Publisher alt_particlecloud_pub_;
+    ros::Publisher map_odom_transform_pub_;
     ros::ServiceServer global_loc_srv_;
     ros::ServiceServer nomotion_update_srv_; //to let amcl update samples without requiring motion
     ros::ServiceServer set_map_srv_;
-    ros::Subscriber initial_pose_sub_old_;
     ros::Subscriber map_sub_;
 
     amcl_hyp_t* initial_pose_hyp_;
@@ -262,9 +285,13 @@ class AmclNode
     bool first_reconfigure_call_;
 
     boost::recursive_mutex configuration_mutex_;
+    boost::recursive_mutex tf_mutex_;
+    boost::recursive_mutex latest_amcl_pose_mutex_;
+
     dynamic_reconfigure::Server<amcl::AMCLConfig> *dsrv_;
     amcl::AMCLConfig default_config_;
     ros::Timer check_laser_timer_;
+    ros::Timer publish_transform_timer_;
 
     int max_beams_, min_particles_, max_particles_;
     double alpha1_, alpha2_, alpha3_, alpha4_, alpha5_;
@@ -313,7 +340,7 @@ boost::shared_ptr<AmclNode> amcl_node_ptr;
 void sigintHandler(int sig)
 {
   // Save latest pose as we're shutting down.
-  amcl_node_ptr->savePoseToServer();
+  amcl_node_ptr->savePoseToFile();
   ros::shutdown();
 }
 
@@ -374,10 +401,13 @@ AmclNode::AmclNode() :
     map_scale_up_factor_ = 16;
 
   double tmp;
-  private_nh_.param("gui_publish_rate", tmp, -1.0);
-  gui_publish_period = ros::Duration(1.0/tmp);
-  private_nh_.param("save_pose_rate", tmp, 0.5);
-  save_pose_period = ros::Duration(1.0/tmp);
+  private_nh_.param("transform_publish_rate", tmp, 50.0);
+  transform_publish_period_ = ros::Duration(1.0 / tmp);
+  private_nh_.param("save_pose_to_server_rate", tmp, 2.0);
+  save_pose_to_server_period_ = ros::Duration(1.0 / tmp);
+  private_nh_.param("save_pose_to_file_rate", tmp, 0.1);
+  save_pose_to_file_period_ = ros::Duration(1.0 / tmp);
+
 
   private_nh_.param("laser_min_range", laser_min_range_, -1.0);
   private_nh_.param("laser_max_range", laser_max_range_, -1.0);
@@ -391,7 +421,11 @@ AmclNode::AmclNode() :
   private_nh_.param("odom_alpha3", alpha3_, 0.2);
   private_nh_.param("odom_alpha4", alpha4_, 0.2);
   private_nh_.param("odom_alpha5", alpha5_, 0.2);
-  
+
+  private_nh_.param("save_pose", save_pose_, false);
+  const std::string default_filepath = "savedpose_amcl.yaml";
+  private_nh_.param("saved_pose_filepath", saved_pose_filepath_, default_filepath);
+
   private_nh_.param("do_beamskip", do_beamskip_, false);
   private_nh_.param("beam_skip_distance", beam_skip_distance_, 0.5);
   private_nh_.param("beam_skip_threshold", beam_skip_threshold_, 0.3);
@@ -489,8 +523,6 @@ AmclNode::AmclNode() :
     bag_scan_period_.fromSec(bag_scan_period);
   }
 
-  updatePoseFromServer();
-
   cloud_pub_interval.fromSec(1.0);
   tfb_ = new tf::TransformBroadcaster();
   tf_ = new TransformListenerWrapper();
@@ -502,21 +534,23 @@ AmclNode::AmclNode() :
     alt_pose_pub_ = nh_.advertise<geometry_msgs::PoseWithCovarianceStamped>("amcl_pose_in_"+global_alt_frame_id_, 2, true);
     alt_particlecloud_pub_ = nh_.advertise<geometry_msgs::PoseArray>("particlecloud_in_"+global_alt_frame_id_, 2, true);
   }
-  global_loc_srv_ = nh_.advertiseService("global_localization", 
+  map_odom_transform_pub_ = nh_.advertise<nav_msgs::Odometry>("amcl_map_odom_transform", 1);
+  global_loc_srv_ = nh_.advertiseService("global_localization",
 					 &AmclNode::globalLocalizationCallback,
                                          this);
   nomotion_update_srv_= nh_.advertiseService("request_nomotion_update", &AmclNode::nomotionUpdateCallback, this);
   set_map_srv_= nh_.advertiseService("set_map", &AmclNode::setMapCallback, this);
 
   laser_scan_sub_ = new message_filters::Subscriber<sensor_msgs::LaserScan>(nh_, scan_topic_, 100);
-  laser_scan_filter_ = 
-          new tf::MessageFilter<sensor_msgs::LaserScan>(*laser_scan_sub_, 
-                                                        *tf_, 
-                                                        odom_frame_id_, 
-                                                        100);
-  laser_scan_filter_->registerCallback(boost::bind(&AmclNode::laserReceived,
-                                                   this, _1));
+  laser_scan_filter_ = new tf::MessageFilter<sensor_msgs::LaserScan>(*laser_scan_sub_, *tf_, odom_frame_id_, 100);
+  laser_scan_filter_->registerCallback(boost::bind(&AmclNode::laserReceived, this, _1));
   initial_pose_sub_ = nh_.subscribe("initialpose", 2, &AmclNode::initialPoseReceived, this);
+  initial_pose_pub_ = nh_.advertise<geometry_msgs::PoseWithCovarianceStamped>(
+      "initialpose", 1, std::bind(&AmclNode::newInitialPoseSubscriber, this, std::placeholders::_1));
+  initial_pose_sub_ = nh_.subscribe("initialpose", 2, &AmclNode::initialPoseReceived, this);
+  publish_transform_timer_ = nh_.createTimer(transform_publish_period_, std::bind(&AmclNode::publishTransform, this,
+                                                                                  std::placeholders::_1));
+  loadPose();
 
   if (odom_integrator_topic_.size()) {
     odom_integrator_sub_ = nh_.subscribe(odom_integrator_topic_, 20, &AmclNode::integrateOdom, this);
@@ -537,7 +571,7 @@ AmclNode::AmclNode() :
 
   // 15s timer to warn on lack of receipt of laser scans, #5209
   laser_check_interval_ = ros::Duration(15.0);
-  check_laser_timer_ = nh_.createTimer(laser_check_interval_, 
+  check_laser_timer_ = nh_.createTimer(laser_check_interval_,
                                        boost::bind(&AmclNode::checkLaserReceived, this, _1));
 }
 
@@ -578,8 +612,9 @@ void AmclNode::reconfigureCB(AMCLConfig &config, uint32_t level)
   laser_min_range_ = config.laser_min_range;
   laser_max_range_ = config.laser_max_range;
 
-  gui_publish_period = ros::Duration(1.0/config.gui_publish_rate);
-  save_pose_period = ros::Duration(1.0/config.save_pose_rate);
+  transform_publish_period_ = ros::Duration(1.0 / config.transform_publish_rate);
+  save_pose_to_server_period_ = ros::Duration(1.0 / config.save_pose_to_server_rate);
+  save_pose_to_file_period_ = ros::Duration(1.0 / config.save_pose_to_file_rate);
 
   transform_tolerance_.fromSec(config.transform_tolerance);
 
@@ -734,7 +769,11 @@ void AmclNode::reconfigureCB(AMCLConfig &config, uint32_t level)
   laser_scan_filter_->registerCallback(boost::bind(&AmclNode::laserReceived,
                                                    this, _1));
 
+  save_pose_ = config.save_pose;
+  saved_pose_filepath_ = config.saved_pose_filepath;
   initial_pose_sub_ = nh_.subscribe("initialpose", 2, &AmclNode::initialPoseReceived, this);
+  publish_transform_timer_ = nh_.createTimer(transform_publish_period_, std::bind(&AmclNode::publishTransform, this,
+                                                                                  std::placeholders::_1));
 }
 
 
@@ -824,9 +863,38 @@ void AmclNode::runFromBag(const std::string &in_bag_fn)
   ros::shutdown();
 }
 
-
-void AmclNode::savePoseToServer()
+void
+AmclNode::attemptSavePose()
 {
+  boost::recursive_mutex::scoped_lock tfl(tf_mutex_);
+  if (latest_tf_valid_)
+  {
+    // Is it time to save our last pose to the param server
+    ros::Time now = ros::Time::now();
+    if ((save_pose_to_server_period_.toSec() > 0.0)
+        && (now - save_pose_to_server_last_time_) >= save_pose_to_server_period_)
+    {
+      savePoseToServer();
+      save_pose_to_server_last_time_ = now;
+    }
+    if ((save_pose_to_file_period_.toSec() > 0.0)
+        && (now - save_pose_to_file_last_time_) >= save_pose_to_file_period_)
+    {
+      savePoseToFile();
+      save_pose_to_file_last_time_ = now;
+    }
+  }
+}
+
+void
+AmclNode::savePoseToServer()
+{
+  if (!save_pose_)
+  {
+    ROS_DEBUG("As specified, not saving pose to server");
+    return;
+  }
+
   // We need to apply the last transform to the latest odom pose to get
   // the latest map pose to store.  We'll take the covariance from
   // last_published_pose.
@@ -839,57 +907,251 @@ void AmclNode::savePoseToServer()
   private_nh_.setParam("initial_pose_x", map_pose.getOrigin().x());
   private_nh_.setParam("initial_pose_y", map_pose.getOrigin().y());
   private_nh_.setParam("initial_pose_a", yaw);
-  private_nh_.setParam("initial_cov_xx", 
-                                  last_published_pose.pose.covariance[6*0+0]);
-  private_nh_.setParam("initial_cov_yy", 
-                                  last_published_pose.pose.covariance[6*1+1]);
-  private_nh_.setParam("initial_cov_aa", 
-                                  last_published_pose.pose.covariance[6*5+5]);
+  private_nh_.setParam("initial_cov_xx", last_published_pose.pose.covariance[6*0+0]);
+  private_nh_.setParam("initial_cov_yy", last_published_pose.pose.covariance[6*1+1]);
+  private_nh_.setParam("initial_cov_aa", last_published_pose.pose.covariance[6*5+5]);
+  geometry_msgs::Pose pose;
+  tf::poseTFToMsg(map_pose, pose);
+  boost::recursive_mutex::scoped_lock lpl(latest_amcl_pose_mutex_);
+  latest_amcl_pose_.pose.pose = pose;
+  latest_amcl_pose_.pose.covariance[6*0+0] = last_published_pose.pose.covariance[6*0+0];
+  latest_amcl_pose_.pose.covariance[6*1+1] = last_published_pose.pose.covariance[6*1+1];
+  latest_amcl_pose_.pose.covariance[6*5+5] = last_published_pose.pose.covariance[6*5+5];
+  latest_amcl_pose_.header.stamp = ros::Time::now();
+  latest_amcl_pose_.header.frame_id = "map";
 }
 
-void AmclNode::updatePoseFromServer()
+void
+AmclNode::savePoseToFile()
 {
-  init_pose_[0] = 0.0;
-  init_pose_[1] = 0.0;
-  init_pose_[2] = 0.0;
-  init_cov_[0] = 0.5 * 0.5;
-  init_cov_[1] = 0.5 * 0.5;
-  init_cov_[2] = (M_PI/12.0) * (M_PI/12.0);
-  // Check for NAN on input from param server, #5239
-  double tmp_pos;
-  private_nh_.param("initial_pose_x", tmp_pos, init_pose_[0]);
-  if(!std::isnan(tmp_pos))
-    init_pose_[0] = tmp_pos;
-  else 
-    ROS_WARN("ignoring NAN in initial pose X position");
-  private_nh_.param("initial_pose_y", tmp_pos, init_pose_[1]);
-  if(!std::isnan(tmp_pos))
-    init_pose_[1] = tmp_pos;
-  else
-    ROS_WARN("ignoring NAN in initial pose Y position");
-  private_nh_.param("initial_pose_a", tmp_pos, init_pose_[2]);
-  if(!std::isnan(tmp_pos))
-    init_pose_[2] = tmp_pos;
-  else
-    ROS_WARN("ignoring NAN in initial pose Yaw");
-  private_nh_.param("initial_cov_xx", tmp_pos, init_cov_[0]);
-  if(!std::isnan(tmp_pos))
-    init_cov_[0] =tmp_pos;
-  else
-    ROS_WARN("ignoring NAN in initial covariance XX");
-  private_nh_.param("initial_cov_yy", tmp_pos, init_cov_[1]);
-  if(!std::isnan(tmp_pos))
-    init_cov_[1] = tmp_pos;
-  else
-    ROS_WARN("ignoring NAN in initial covariance YY");
-  private_nh_.param("initial_cov_aa", tmp_pos, init_cov_[2]);
-  if(!std::isnan(tmp_pos))
-    init_cov_[2] = tmp_pos;
-  else
-    ROS_WARN("ignoring NAN in initial covariance AA");	
+  if (!save_pose_)
+  {
+    ROS_DEBUG("As specified, not saving pose to file");
+    return;
+  }
+  boost::recursive_mutex::scoped_lock lpl(latest_amcl_pose_mutex_);
+
+  YAML::Node stamp_node;
+  ros::Time stamp = latest_amcl_pose_.header.stamp;
+  stamp_node["sec"] = stamp.sec;
+  stamp_node["nsec"] = stamp.nsec;
+
+  YAML::Node header_node;
+  header_node["stamp"] = stamp_node;
+  header_node["frame_id"] = "map";
+
+  YAML::Node pose_pose_position_node;
+  pose_pose_position_node["x"] = latest_amcl_pose_.pose.pose.position.x;
+  pose_pose_position_node["y"] = latest_amcl_pose_.pose.pose.position.y;
+  pose_pose_position_node["z"] = 0.0;
+
+  YAML::Node pose_pose_orientation_node;
+  pose_pose_orientation_node["x"] = 0.0;
+  pose_pose_orientation_node["y"] = 0.0;
+  pose_pose_orientation_node["z"] = latest_amcl_pose_.pose.pose.orientation.z;
+  pose_pose_orientation_node["w"] = latest_amcl_pose_.pose.pose.orientation.w;
+
+  YAML::Node pose_pose_node;
+  pose_pose_node["position"] = pose_pose_position_node;
+  pose_pose_node["orientation"] = pose_pose_orientation_node;
+
+  YAML::Node pose_covariance_node;
+  std::vector<double> covariance(36, 0.0);
+  covariance[6*0+0] = latest_amcl_pose_.pose.covariance[6*0+0];
+  covariance[6*1+1] = latest_amcl_pose_.pose.covariance[6*1+1];
+  covariance[6*5+5] = latest_amcl_pose_.pose.covariance[6*5+5];
+  for (int i = 0; i < covariance.size(); i++)
+  {
+    pose_covariance_node[i] = covariance[i];
+  }
+
+  YAML::Node pose_node;
+  pose_node["pose"] = pose_pose_node;
+  pose_node["covariance"] = pose_covariance_node;
+
+  YAML::Node pose_stamped_node;
+  pose_stamped_node["header"] = header_node;
+  pose_stamped_node["pose"] = pose_node;
+
+  badger_file_lib::atomic_ofstream file_buf(saved_pose_filepath_);
+  file_buf << pose_stamped_node;
+  file_buf.close();
 }
 
-void 
+void
+AmclNode::loadPose()
+{
+  if (loadPoseFromServer())
+  {
+    ROS_DEBUG("Successfully loaded pose from server.");
+  }
+  else if (loadPoseFromFile())
+  {
+    ROS_DEBUG("Failed to load pose from server, but successfully loaded pose from file.");
+  }
+  else
+  {
+    ROS_WARN("Failed to load pose from server or file. Setting pose to default values.");
+    init_pose_[0] = 0.0;
+    init_pose_[1] = 0.0;
+    init_pose_[2] = 0.0;
+    init_cov_[0] = 0.5 * 0.5;
+    init_cov_[1] = 0.5 * 0.5;
+    init_cov_[2] = (M_PI / 12.0) * (M_PI / 12.0);
+  }
+}
+
+bool
+AmclNode::loadPoseFromServer()
+{
+  bool success = loadParamFromServer("initial_pose_x", &init_pose_[0]);
+  success = success and loadParamFromServer("initial_pose_y", &init_pose_[1]);
+  success = success and loadParamFromServer("initial_pose_a", &init_pose_[2]);
+  success = success and loadParamFromServer("initial_cov_xx", &init_cov_[0]);
+  success = success and loadParamFromServer("initial_cov_yy", &init_cov_[1]);
+  success = success and loadParamFromServer("initial_cov_aa", &init_cov_[2]);
+
+  if(success)
+  {
+    ROS_INFO("Successfully loaded initial pose from server.");
+    ROS_INFO("Pose loaded: (%.3f, %.3f)", init_pose_[0], init_pose_[1]);
+  }
+  return success;
+}
+
+bool
+AmclNode::loadParamFromServer(std::string param_name, double* val)
+{
+  double param_val;
+  bool success = private_nh_.getParam(param_name, param_val) and !std::isnan(param_val);
+  if(success)
+  {
+    *val = param_val;
+  }
+  else
+  {
+    ROS_DEBUG_STREAM("Failed to load " << param_name << " from server.");
+  }
+  return success;
+}
+
+bool
+AmclNode::loadPoseFromFile()
+{
+  double x, y, z, w, roll, pitch, yaw, xx, yy, aa;
+  try
+  {
+    YAML::Node config = loadYamlFromFile();
+    x = config["pose"]["pose"]["position"]["x"].as<double>();
+    y = config["pose"]["pose"]["position"]["y"].as<double>();
+    z = config["pose"]["pose"]["orientation"]["z"].as<double>();
+    w = config["pose"]["pose"]["orientation"]["w"].as<double>();
+    tf::Quaternion q(0.0, 0.0, z, w);
+    tf::Matrix3x3 m(q);
+    m.getRPY(roll, pitch, yaw);
+    xx = config["pose"]["covariance"][6*0+0].as<double>();
+    yy = config["pose"]["covariance"][6*1+1].as<double>();
+    aa = config["pose"]["covariance"][6*5+5].as<double>();
+  }
+  catch (std::exception& e)
+  {
+    ROS_WARN_STREAM("Exception while loading pose from file. Failed to parse saved YAML pose. " << e.what());
+    return false;
+  }
+  if (std::isnan(x) or std::isnan(y) or std::isnan(yaw) or std::isnan(xx) or std::isnan(yy) or std::isnan(aa))
+  {
+    ROS_WARN("Failed to parse saved YAML pose. NAN value read from file.");
+    return false;
+  }
+  init_pose_[0] = x;
+  init_pose_[1] = y;
+  init_pose_[2] = yaw;
+  init_cov_[0] = xx;
+  init_cov_[1] = yy;
+  init_cov_[2] = aa;
+  ROS_INFO("Successfully loaded YAML pose from file.");
+  ROS_INFO("Pose loaded: %.3f, %.3f", init_pose_[0], init_pose_[1]);
+  return true;
+}
+
+YAML::Node
+AmclNode::loadYamlFromFile()
+{
+  YAML::Node node = YAML::LoadFile(saved_pose_filepath_);
+  std::string key = node.begin()->first.as<std::string>();
+  if (key.compare("header") == 0 or key.compare("pose") == 0)
+  {
+    ROS_DEBUG("YAML c++ style, returning node");
+    return node;
+  }
+  else if (key.compare("state") == 0)
+  {
+    try
+    {
+      ROS_DEBUG("YAML python style, converting node");
+      YAML::Node state_node = node["state"];
+      YAML::Node header_node;
+      header_node["frame_id"] = node["state"][0]["state"][2];
+      YAML::Node position_node;
+      position_node["x"] = node["state"][1]["state"][0]["state"][0]["state"][0];
+      position_node["y"] = node["state"][1]["state"][0]["state"][0]["state"][1];
+      YAML::Node orientation_node;
+      orientation_node["z"] = node["state"][1]["state"][0]["state"][1]["state"][2];
+      orientation_node["w"] = node["state"][1]["state"][0]["state"][1]["state"][3];
+      YAML::Node pose_pose_node;
+      pose_pose_node["position"] = position_node;
+      pose_pose_node["orientation"] = orientation_node;
+      YAML::Node pose_covariance_node;
+      pose_covariance_node[6*0+0] = node["state"][1]["state"][1][6*0+0];
+      pose_covariance_node[6*1+1] = node["state"][1]["state"][1][6*1+1];
+      pose_covariance_node[6*5+5] = node["state"][1]["state"][1][6*5+5];
+      YAML::Node pose_node;
+      pose_node["pose"] = pose_pose_node;
+      pose_node["covariance"] = pose_covariance_node;
+      YAML::Node converted;
+      converted["header"] = header_node;
+      converted["pose"] = pose_node;
+      return converted;
+    }
+    catch (std::exception& e)
+    {
+      YAML::Node empty;
+      ROS_WARN("Exception thrown while parsing the saved pose file in the old Python style YAML.");
+      return empty;
+    }
+  }
+  else
+  {
+    YAML::Node empty;
+    ROS_WARN("Cannot parse the saved pose file in either the new c++ style YAML "
+             "nor the old Python style YAML.");
+    return empty;
+  }
+}
+
+void
+AmclNode::publishInitialPose()
+{
+  geometry_msgs::PoseWithCovarianceStamped pose;
+  pose.header.stamp = ros::Time::now();
+  pose.header.frame_id = "/map";
+  pose.pose.pose.position.x = init_pose_[0];
+  pose.pose.pose.position.y = init_pose_[1];
+  pose.pose.pose.position.z = 0.0;
+  pose.pose.pose.orientation = tf::createQuaternionMsgFromYaw(init_pose_[2]);
+  std::vector<double> cov_vals(36, 0.0);
+  cov_vals[6*0+0] = init_cov_[0];
+  cov_vals[6*1+1] = init_cov_[1];
+  cov_vals[6*5+5] = init_cov_[2];
+  for (int i = 0; i < cov_vals.size(); i++)
+  {
+    pose.pose.covariance[i] = cov_vals[i];
+  }
+  ROS_INFO("Publishing initial pose: (%0.3f, %0.3f)", pose.pose.pose.position.x, pose.pose.pose.position.y);
+  initial_pose_pub_.publish(pose);
+}
+
+void
 AmclNode::checkLaserReceived(const ros::TimerEvent& event)
 {
   ros::Duration d = ros::Time::now() - last_laser_received_ts_;
@@ -962,7 +1224,6 @@ AmclNode::handleMapMessage(const nav_msgs::OccupancyGrid& msg)
   pf_set_resample_model(pf_, resample_model_type_);
 
   // Initialize the filter
-  updatePoseFromServer();
   pf_vector_t pf_init_pose_mean = pf_vector_zero();
   pf_init_pose_mean.v[0] = init_pose_[0];
   pf_init_pose_mean.v[1] = init_pose_[1];
@@ -1032,10 +1293,8 @@ AmclNode::handleMapMessage(const nav_msgs::OccupancyGrid& msg)
         if(map_occ_dist(map_,i,j) > laser_non_free_space_radius_)
           free_space_indices.push_back(std::make_pair(i,j));
 
-  // In case the initial pose message arrived before the first map,
-  // try to apply the initial pose now that the map has arrived.
-  applyInitialPose();
-
+  // Publish initial pose loaded from the server or file at startup
+  publishInitialPose();
 }
 
 void
@@ -1293,7 +1552,7 @@ AmclNode::globalLocalizationCallback(std_srvs::Empty::Request& req,
 }
 
 // force nomotion updates (amcl updating without requiring motion)
-bool 
+bool
 AmclNode::nomotionUpdateCallback(std_srvs::Empty::Request& req,
                                      std_srvs::Empty::Response& res)
 {
@@ -1695,72 +1954,65 @@ AmclNode::laserReceived(const sensor_msgs::LaserScanConstPtr& laser_scan)
         return;
       }
 
+      boost::recursive_mutex::scoped_lock tfl(tf_mutex_);
       latest_tf_ = tf::Transform(tf::Quaternion(odom_to_map.getRotation()),
                                  tf::Point(odom_to_map.getOrigin()));
       latest_tf_valid_ = true;
-
-      if (tf_broadcast_ == true)
-      {
-        // We want to send a transform that is good up until a
-        // tolerance time so that odom can be used
-        ros::Time transform_expiration = (laser_scan->header.stamp +
-                                          transform_tolerance_);
-        tf::StampedTransform tmp_tf_stamped(latest_tf_.inverse(),
-                                            transform_expiration,
-                                            global_frame_id_, odom_frame_id_);
-        if (tf_reverse_ == true)
-        {
-          tmp_tf_stamped = tf::StampedTransform(latest_tf_,
-                                            transform_expiration,
-                                            odom_frame_id_, global_frame_id_);
-        }
-        this->tfb_->sendTransform(tmp_tf_stamped);
-        sent_first_transform_ = true;
-      }
     }
     else
     {
       ROS_ERROR("No pose!");
     }
   }
-  else if(latest_tf_valid_)
-  {
-    if (tf_broadcast_ == true)
-    {
-      // Nothing changed, so we'll just republish the last transform, to keep
-      // everybody happy.
-      ros::Time transform_expiration = (laser_scan->header.stamp +
-                                        transform_tolerance_);
-      tf::StampedTransform tmp_tf_stamped(latest_tf_.inverse(),
-                                          transform_expiration,
-                                          global_frame_id_, odom_frame_id_);
-      if (tf_reverse_ == true)
-      {
-        tmp_tf_stamped = tf::StampedTransform(latest_tf_,
-                                          transform_expiration,
-                                          odom_frame_id_, global_frame_id_);
-      }
-      this->tfb_->sendTransform(tmp_tf_stamped);
-    }
-
-    // Is it time to save our last pose to the param server
-    ros::Time now = ros::Time::now();
-    if((save_pose_period.toSec() > 0.0) &&
-       (now - save_pose_last_time) >= save_pose_period)
-    {
-      this->savePoseToServer();
-      save_pose_last_time = now;
-    }
-  }
-
+  attemptSavePose();
 }
 
 double
-AmclNode::getYaw(tf::Pose& t)
+AmclNode::getYaw(const tf::Pose& t)
 {
   double yaw, pitch, roll;
   t.getBasis().getEulerYPR(yaw,pitch,roll);
   return yaw;
+}
+
+void
+AmclNode::publishTransform(const ros::TimerEvent& event)
+{
+  boost::recursive_mutex::scoped_lock tfl(tf_mutex_);
+  if (tf_broadcast_ && latest_tf_valid_)
+  {
+    // We want to send a transform that is good up until a
+    // tolerance time so that odom can be used
+    ros::Time transform_expiration = (ros::Time::now() + transform_tolerance_);
+    tf::StampedTransform tmp_tf_stamped;
+    tf::Transform tf_transform;
+    if (tf_reverse_)
+    {
+      tmp_tf_stamped = tf::StampedTransform(latest_tf_, transform_expiration, odom_frame_id_, global_frame_id_);
+      tf_transform = latest_tf_;
+    }
+    else
+    {
+      tmp_tf_stamped = tf::StampedTransform(latest_tf_.inverse(), transform_expiration,
+                                            global_frame_id_, odom_frame_id_);
+      tf_transform = latest_tf_.inverse();
+    }
+    geometry_msgs::Quaternion quaternion;
+    tf::quaternionTFToMsg(tf_transform.getRotation(), quaternion);
+    geometry_msgs::Vector3 origin;
+    tf::vector3TFToMsg(tf_transform.getOrigin(), origin);
+    nav_msgs::Odometry odom;
+    odom.header.stamp = ros::Time::now();
+    odom.header.frame_id = global_frame_id_;
+    odom.child_frame_id = odom_frame_id_;
+    odom.pose.pose.position.x = origin.x;
+    odom.pose.pose.position.y = origin.y;
+    odom.pose.pose.position.z = origin.z;
+    odom.pose.pose.orientation = quaternion;
+    map_odom_transform_pub_.publish(odom);
+    tfb_->sendTransform(tmp_tf_stamped);
+    sent_first_transform_ = true;
+  }
 }
 
 void
@@ -1815,6 +2067,7 @@ AmclNode::handleInitialPoseMessage(const geometry_msgs::PoseWithCovarianceStampe
     // global_frame_id_ frame doesn't exist.  We only care about in-time
     // transformation for on-the-move pose-setting, so ignoring this
     // startup condition doesn't really cost us anything.
+    boost::recursive_mutex::scoped_lock tfl(tf_mutex_);
     if(sent_first_transform_)
       ROS_WARN("Failed to transform initial pose in time (%s)", e.what());
     tx_odom.setIdentity();
@@ -1865,12 +2118,27 @@ AmclNode::handleInitialPoseMessage(const geometry_msgs::PoseWithCovarianceStampe
 void
 AmclNode::applyInitialPose()
 {
-  boost::recursive_mutex::scoped_lock cfl(configuration_mutex_);
   if( initial_pose_hyp_ != NULL && map_ != NULL ) {
     pf_init(pf_, initial_pose_hyp_->pf_pose_mean, initial_pose_hyp_->pf_pose_cov);
     pf_init_ = false;
 
     delete initial_pose_hyp_;
     initial_pose_hyp_ = NULL;
+  }
+}
+
+void
+AmclNode::newInitialPoseSubscriber(const ros::SingleSubscriberPublisher& single_sub_pub)
+{
+  boost::recursive_mutex::scoped_lock lpl(latest_amcl_pose_mutex_);
+  if (latest_amcl_pose_.header.frame_id.compare("map") == 0)
+  {
+    ROS_INFO("New initial pose subscriber registered. Publishing latest amcl pose: (%f, %f).",
+             latest_amcl_pose_.pose.pose.position.x, latest_amcl_pose_.pose.pose.position.y);
+    single_sub_pub.publish(latest_amcl_pose_);
+  }
+  else
+  {
+    ROS_DEBUG("New initial pose subscriber registered. Latest amcl pose uninitialized, no pose will be published.");
   }
 }
