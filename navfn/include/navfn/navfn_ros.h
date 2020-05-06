@@ -169,6 +169,7 @@ namespace navfn {
        * @brief Store a copy of the current costmap in \a costmap.  Called by makePlan.
        */
       costmap_2d::Costmap2D* costmap_;
+      std::unique_ptr<costmap_2d::Costmap2DROS> private_costmap_;
       boost::shared_ptr<NavFn> planner_;
       ros::Publisher plan_pub_;
       pcl_ros::Publisher<PotarrPoint> potarr_pub_;
