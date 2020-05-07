@@ -56,6 +56,10 @@ typedef float Cost;
 // Sentinel. Don't choose NAN as it can't be pruned in octomap
 const Cost UNKNOWN = -200.0;
 const Cost FREE = -10.0;
+// A "nonlethal" Cost is any Cost strictly between FREE and LETHAL
+// Specifically, UNKNOWN is *not* nonlethal. Nonlethal is meant to
+// represent a sensed object that is desirable to avoid but would
+// likely be OK to collide with.
 const Cost LETHAL = 10.0;
 /* A log-odds between FREE and LETHAL represents a non-lethal,
  * but greater than zero cost for that space */
