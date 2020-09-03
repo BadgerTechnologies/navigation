@@ -104,6 +104,7 @@ add_library(layers_3d
   plugins/costmap_3d_to_2d_layer.cpp
   plugins/costmap_3d_to_2d_layer_3d.cpp
   plugins/static_2d_layer_3d.cpp
+  plugins/cylinder_clearing_layer_3d.cpp
 )
 
 target_link_libraries(layers_3d
