@@ -8,6 +8,7 @@ find_package(catkin REQUIRED COMPONENTS
   dynamic_reconfigure
   actionlib_msgs
   pluginlib
+  rosbag
   roscpp
   geometry_msgs
   octomap_msgs
@@ -68,6 +69,7 @@ catkin_package(
     costmap_2d
     dynamic_reconfigure
     pluginlib
+    rosbag
     roscpp
     geometry_msgs
     octomap_msgs

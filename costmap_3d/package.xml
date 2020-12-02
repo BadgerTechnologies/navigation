@@ -27,6 +27,7 @@
   <depend>dynamic_reconfigure</depend>
   <depend>actionlib_msgs</depend>
   <depend>pluginlib</depend>
+  <depend>rosbag</depend>
   <depend>roscpp</depend>
   <depend>geometry_msgs</depend>
   <depend>octomap</depend>

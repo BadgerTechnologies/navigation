@@ -12,6 +12,7 @@ find_package(catkin REQUIRED
         pcl_conversions
         pcl_ros
         pluginlib
+        rosbag
         roscpp
         tf
         visualization_msgs

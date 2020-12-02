@@ -32,6 +32,7 @@
     <build_depend>pcl_conversions</build_depend>
     <build_depend>pcl_ros</build_depend>
     <build_depend>pluginlib</build_depend>
+    <build_depend>rosbag</build_depend>
     <build_depend>roscpp</build_depend>
     <build_depend>rostest</build_depend>
     <build_depend>sensor_msgs</build_depend>
@@ -50,6 +51,7 @@
     <run_depend>pcl_conversions</run_depend>
     <run_depend>pcl_ros</run_depend>
     <run_depend>pluginlib</run_depend>
+    <run_depend>rosbag</run_depend>
     <run_depend>rosconsole</run_depend>
     <run_depend>roscpp</run_depend>
     <run_depend>rostest</run_depend>
@@ -60,7 +62,6 @@
     <run_depend>voxel_grid</run_depend>
 
     <test_depend>map_server</test_depend>
-    <test_depend>rosbag</test_depend>
 
     <export>
       <costmap_2d plugin="${prefix}/costmap_plugins.xml"/>
