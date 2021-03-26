@@ -66,6 +66,12 @@ double Costmap3DModel::footprintCost(
     double inscribed_radius,
     double circumscribed_radius)
 {
+  {
+    // To be consistent w/ 2D CostmapModel, return collision for any pose that is off the 2D map.
+    unsigned int unused_cell_x, unused_cell_y;
+    if(!costmap_.worldToMap(x, y, unused_cell_x, unused_cell_y))
+      return -1.0;
+  }
   geometry_msgs::Pose pose;
   pose.position.x = x;
   pose.position.y = y;
