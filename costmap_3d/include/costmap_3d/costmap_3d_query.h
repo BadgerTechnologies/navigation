@@ -67,6 +67,8 @@ namespace costmap_3d
 class Costmap3DQuery
 {
 public:
+  using QueryRegionScale = Eigen::Vector3d;
+
   /**
    * @brief  Construct a query object associated with a layered costmap 3D.
    * The query will always be performed on the current layered costmap 3D,
@@ -76,6 +78,7 @@ public:
       const LayeredCostmap3D* layered_costmap_3d,
       const std::string& mesh_resource,
       double padding = 0.0,
+      Costmap3DQuery::QueryRegionScale = Costmap3DQuery::QueryRegionScale::Zero(),
       unsigned int pose_bins_per_meter = 4,
       unsigned int pose_bins_per_radian = 4,
       unsigned int pose_milli_bins_per_meter = 20,
@@ -96,6 +99,7 @@ public:
       const Costmap3DConstPtr& costmap_3d,
       const std::string& mesh_resource,
       double padding = 0.0,
+      Costmap3DQuery::QueryRegionScale = Costmap3DQuery::QueryRegionScale::Zero(),
       unsigned int pose_bins_per_meter = 4,
       unsigned int pose_bins_per_radian = 4,
       unsigned int pose_milli_bins_per_meter = 20,
@@ -110,7 +114,8 @@ public:
   static constexpr QueryRegion ALL = GetPlanCost3DService::Request::COST_QUERY_REGION_ALL;
   static constexpr QueryRegion LEFT = GetPlanCost3DService::Request::COST_QUERY_REGION_LEFT;
   static constexpr QueryRegion RIGHT = GetPlanCost3DService::Request::COST_QUERY_REGION_RIGHT;
-  static constexpr QueryRegion MAX = RIGHT+1;
+  static constexpr QueryRegion RECTANGULAR_PRISM = GetPlanCost3DService::Request::COST_QUERY_REGION_RECTANGULAR_PRISM;
+  static constexpr QueryRegion MAX = RECTANGULAR_PRISM+1;
 
   /// What kind of obstacles to consider for the query.
   using QueryObstacles = uint8_t;
@@ -222,6 +227,16 @@ public:
   /** @brief get a const reference to the mesh polygons being used */
   const std::vector<pcl::Vertices>& getRobotMeshPolygons() const {return robot_mesh_.polygons;}
 
+  /** @brief Set scale for query region.
+   *
+   * Some query regions have a scaling vector, such as rectangular prism.
+   * It is more efficient to set the scaling per-query object in most cases.
+   * This method must hold the internal lock, so this interface is not useful
+   * for parallel queries. In such cases, use the DistanceOptions to set the
+   * scale per queried pose.
+   */
+  void setQueryRegionDefaultScale(QueryRegionScale default_scale);
+
   /** @brief set the layered costmap update number.
    *
    * This is useful for buffered queries to store which costmap update they represent.
@@ -311,9 +326,8 @@ private:
   // efficient way to query nonlethal. Fix this by making a copy of the octree
   // when the first nonlethal query is issued to use for nonlethal queries.
   std::shared_ptr<const octomap::OcTree> nonlethal_octree_ptr_;
-  void setupFCLOctree(const geometry_msgs::Pose& pose,
-                      QueryRegion query_region,
-                      fcl::OcTree<FCLFloat>* fcl_octree_ptr) const;
+
+  QueryRegionScale query_region_scale_;
 
   void padPoints(pcl::PointCloud<pcl::PointXYZ>::Ptr points, float padding)
   {
@@ -549,6 +563,90 @@ private:
     fcl::Transform3<FCLFloat> octomap_box_tf;
     std::shared_ptr<fcl::TriangleP<FCLFloat>> mesh_triangle;
     int mesh_triangle_id;
+  };
+  // Internal class to decompose a region of interst into a set of halfspaces.
+  // Because this internal class is used on the fast-paths, avoid dynamic memory.
+  class RegionsOfInterestAtPose
+  {
+  public:
+    // Construct a region of interst at a pose. Internally store the set of halfspaces.
+    RegionsOfInterestAtPose(QueryRegion query_region, const QueryRegionScale& query_region_scale, const geometry_msgs::Pose& pose)
+    {
+      if (query_region == LEFT || query_region == RIGHT)
+      {
+        num_rois = 1;
+        fcl::Vector3<FCLFloat> normal;
+        // Note, for FCL halfspaces, the inside space is that below the plane, so
+        // the normal needs to point away from the query region
+        if (query_region == LEFT)
+        {
+          normal << 0.0, -1.0, 0.0;
+        }
+        else if(query_region == RIGHT)
+        {
+          normal << 0.0, 1.0, 0.0;
+        }
+        rois[0] = fcl::transform(fcl::Halfspace<FCLFloat>(normal, 0.0), poseToFCLTransform<FCLFloat>(pose));
+      }
+      else if (query_region == RECTANGULAR_PRISM)
+      {
+        num_rois = 5;
+        fcl::Vector3<FCLFloat> normals[5] = {
+            fcl::Vector3<FCLFloat>(-1.0, 0.0, 0.0),
+            fcl::Vector3<FCLFloat>(0.0, 1.0, 0.0),
+            fcl::Vector3<FCLFloat>(0.0, -1.0, 0.0),
+            fcl::Vector3<FCLFloat>(0.0, 0.0, 1.0),
+            fcl::Vector3<FCLFloat>(0.0, 0.0, -1.0),
+        };
+        FCLFloat distances[5] = {
+            0.0,
+            query_region_scale(1) / 2.0,
+            query_region_scale(1) / 2.0,
+            query_region_scale(2) / 2.0,
+            query_region_scale(2) / 2.0,
+        };
+        const auto fcl_xform = poseToFCLTransform<FCLFloat>(pose);
+        for (unsigned int i = 0; i < num_rois; ++i)
+        {
+          rois[i] = fcl::transform(fcl::Halfspace<FCLFloat>(normals[i], distances[i]), fcl_xform);
+        }
+      }
+    }
+    // Test if the given distance cache entry is inside the region.
+    // Regions are always inclusive. A voxel on the region boundary is
+    // considered "inside".
+    bool distanceCacheEntryInside(const DistanceCacheEntry& cache_entry)
+    {
+      const auto& box = *(cache_entry.octomap_box);
+      const auto& box_tf = cache_entry.octomap_box_tf;
+
+      for (unsigned int i = 0; i < num_rois; ++i)
+      {
+        if (costmap_3d::boxHalfspaceSignedDistance<FCLFloat>(box, box_tf, rois[i]) > 0)
+        {
+          return false;
+        }
+      }
+      // In or on each halfspace
+      return true;
+    }
+    // Apply this region to the FCL octree by copying the halfspaces into the
+    // FCL octree class.
+    void setupFCLOctree(fcl::OcTree<FCLFloat>* fcl_octree_ptr) const
+    {
+      for (unsigned int i = 0; i < num_rois; ++i)
+      {
+        fcl_octree_ptr->addToRegionOfInterest(rois[i]);
+      }
+    }
+  private:
+    unsigned int num_rois = 0;
+    // To avoid dynamic memory allocation use a fixed-size array.
+    // This is an added point of maintenance, but is necessary for optimum
+    // query performance. If a new region is added that requires more than
+    // the current number of regions, the size of rois must also be changed
+    // to match.
+    fcl::Halfspace<FCLFloat> rois[5];
   };
   // used by distance calculation to find interior collisions
   double handleDistanceInteriorCollisions(
