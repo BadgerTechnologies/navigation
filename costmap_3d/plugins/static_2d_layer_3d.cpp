@@ -62,13 +62,15 @@ void Static2DLayer3D::initialize(LayeredCostmap3D* parent, std::string name, tf:
   pnh_ = ros::NodeHandle("~/" + name);
 
   map_topic_ = pnh_.param("map_topic", std::string("map"));
-  height_ = pnh_.param("height", 0.0);
+  z_min_ = pnh_.param("z_min", 0.0);
+  z_max_ = pnh_.param("z_max", 0.0);
   lethal_cost_threshold_ = static_cast<int8_t>(pnh_.param<int>("lethal_cost_threshold", 100));
   unknown_to_lethal_ = pnh_.param<bool>("unknown_to_lethal", false);
 
   ROS_INFO_STREAM("Static2DLayer3D " << name << ": initializing");
   ROS_INFO_STREAM("  map_topic: " << map_topic_);
-  ROS_INFO_STREAM("  height: " << height_);
+  ROS_INFO_STREAM("  z_min_: " << z_min_);
+  ROS_INFO_STREAM("  z_max_: " << z_max_);
   ROS_INFO_STREAM("  lethal_cost_threshold: " << static_cast<int>(lethal_cost_threshold_));
   ROS_INFO_STREAM("  unknown_to_lethal: " << unknown_to_lethal_);
 
@@ -253,7 +255,8 @@ void Static2DLayer3D::occupancyGridCallback(const nav_msgs::OccupancyGridConstPt
   // Only process this map if we are active
   if (active_)
   {
-    octomap::key_type key_z = costmap_->coordToKey(height_);
+    octomap::key_type key_z_min = costmap_->coordToKey(z_min_);
+    octomap::key_type key_z_max = costmap_->coordToKey(z_max_);
     Costmap3D new_cells(costmap_->getResolution());
     for (unsigned int j = 0; j < size_y; ++j)
     {
@@ -263,11 +266,14 @@ void Static2DLayer3D::occupancyGridCallback(const nav_msgs::OccupancyGridConstPt
       {
         double x = origin_x + i * resolution + resolution / 2.0;
         octomap::key_type key_x = costmap_->coordToKey(x);
-        Costmap3DIndex key(key_x, key_y, key_z);
         Cost pt_cost = occupancyGridToCost(grid->data[j * size_x + i]);
         if (pt_cost != UNKNOWN)
         {
-          new_cells.setNodeValue(key, pt_cost);
+          for (octomap::key_type key_z = key_z_min; key_z <= key_z_max; ++key_z)
+          {
+            Costmap3DIndex key(key_x, key_y, key_z);
+            new_cells.setNodeValue(key, pt_cost);
+          }
         }
       }
     }

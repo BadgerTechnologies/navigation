@@ -96,7 +96,8 @@ protected:
   bool active_;
   std::string map_topic_;
   ros::Subscriber map_sub_;
-  double height_;
+  double z_min_;
+  double z_max_;
   uint8_t lethal_cost_threshold_;
   bool unknown_to_lethal_;
 };
