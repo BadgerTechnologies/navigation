@@ -25,6 +25,11 @@ uint8 COST_QUERY_MODE_DISTANCE=2
 # in position/orientation will generate a derivative pointing away from
 # one of the penetration points (not necessarily the deepest).
 uint8 COST_QUERY_MODE_SIGNED_DISTANCE=3
+# Do not find actual costs, find exact signed distances instead.
+# Exact distances are more expensive to calculate when many voxels are inside
+# the footprint mesh. Only use exact signed distance when exact penetration
+# depth is necessary.
+uint8 COST_QUERY_MODE_EXACT_SIGNED_DISTANCE=4
 # Set to one of the above COST_QUERY_MODE_* to control query mode.
 # The default is COST_QUERY_MODE_COST.
 uint8 cost_query_mode

@@ -488,7 +488,8 @@ void Costmap3DROS::processPlanCost3D(RequestType& request, ResponseType& respons
   }
 
   if (request.cost_query_mode == costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_MODE_DISTANCE ||
-      request.cost_query_mode == costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_MODE_SIGNED_DISTANCE)
+      request.cost_query_mode == costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_MODE_SIGNED_DISTANCE ||
+      request.cost_query_mode == costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_MODE_EXACT_SIGNED_DISTANCE)
   {
     response.cost = std::numeric_limits<double>::max();
   }
@@ -542,6 +543,12 @@ void Costmap3DROS::processPlanCost3D(RequestType& request, ResponseType& respons
         {
           dopts.signed_distance = true;
         }
+        if (request.cost_query_mode == costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_MODE_EXACT_SIGNED_DISTANCE)
+        {
+          dopts.signed_distance = true;
+          dopts.exact_signed_distance = true;
+          dopts.relative_error = 0.0;
+        }
         pose_cost = query->footprintDistance(pose.pose, dopts);
       }
     }
@@ -559,7 +566,8 @@ void Costmap3DROS::processPlanCost3D(RequestType& request, ResponseType& respons
       collision = true;
     }
     if (request.cost_query_mode == costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_MODE_DISTANCE ||
-        request.cost_query_mode == costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_MODE_SIGNED_DISTANCE)
+        request.cost_query_mode == costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_MODE_SIGNED_DISTANCE ||
+        request.cost_query_mode == costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_MODE_EXACT_SIGNED_DISTANCE)
     {
       // in distance mode, the cost is the minimum distance across all poses
       response.cost = std::min(response.cost, pose_cost);

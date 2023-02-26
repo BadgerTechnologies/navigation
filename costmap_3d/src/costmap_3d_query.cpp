@@ -853,7 +853,12 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     octree_solver.setUncertainOnly(true);
   }
 
-  if (result.min_distance > 0.0)
+  if (opts.exact_signed_distance)
+  {
+    octree_solver.setExactSignedDistance(true);
+  }
+
+  if (result.min_distance > 0.0 || opts.exact_signed_distance)
   {
     fcl::OcTree<FCLFloat> fcl_octree(octree_to_query);
     // Always setup the correct occupancy limits
@@ -960,13 +965,15 @@ double Costmap3DQuery::footprintDistance(const geometry_msgs::Pose& pose,
 double Costmap3DQuery::footprintSignedDistance(const geometry_msgs::Pose& pose,
                                                Costmap3DQuery::QueryRegion query_region,
                                                bool reuse_past_result,
-                                               double relative_error)
+                                               double relative_error,
+                                               bool exact_signed_distance)
 {
   DistanceOptions opts;
   opts.query_region = query_region;
   opts.reuse_past_result = reuse_past_result;
   opts.relative_error = relative_error;
   opts.signed_distance = true;
+  opts.exact_signed_distance = exact_signed_distance;
   return calculateDistance(pose, opts);
 }
 

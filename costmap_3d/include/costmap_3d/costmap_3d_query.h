@@ -195,7 +195,8 @@ public:
   virtual double footprintSignedDistance(const geometry_msgs::Pose& pose,
                                          QueryRegion query_region = ALL,
                                          bool reuse_past_result = false,
-                                         double relative_error = 0.05);
+                                         double relative_error = 0.05,
+                                         bool exact_signed_distance = false);
 
   using FCLFloat = double;
   struct DistanceOptions
@@ -206,6 +207,11 @@ public:
     QueryObstacles query_obstacles = LETHAL_ONLY;
     //! Whether to find the signed distance on collision
     bool signed_distance = false;
+    /** Whether to find the exact signed distance, or relaxed signed distance
+     * (where derivatives are consistent, collisions are correct, but the exact
+     * penetration depth is not returned)
+     */
+    bool exact_signed_distance = false;
     //! Whether to reuse the previous box/mesh triangle result directly
     bool reuse_past_result = false;
     //! Acceptable relative error limit (improves runtime)

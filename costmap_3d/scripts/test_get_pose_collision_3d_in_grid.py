@@ -10,7 +10,7 @@ import rospy
 import tf2_ros
 import tf2_geometry_msgs
 import tf.transformations
-import costmap_3d.msg
+import costmap_3d_msgs.msg
 import geometry_msgs.msg
 import sensor_msgs.msg
 import copy
@@ -38,19 +38,20 @@ if __name__ == "__main__":
             sensor_msgs.msg.PointCloud, queue_size=1, latch=True)
     test_ns = "/move_base/local_costmap/"
     get_cost_srv = actionlib.SimpleActionClient(test_ns + "get_plan_cost_3d",
-            costmap_3d.msg.GetPlanCost3DAction)
+            costmap_3d_msgs.msg.GetPlanCost3DAction)
     frame = "odom"
     pose_array = geometry_msgs.msg.PoseArray()
     pose_array.header.frame_id = frame
     pose_array.header.stamp = rospy.Time.now()
-    req = costmap_3d.msg.GetPlanCost3DGoal()
+    req = costmap_3d_msgs.msg.GetPlanCost3DGoal()
     req.lazy = False
     req.buffered = True
     req.header.frame_id = frame
     req.header.stamp = pose_array.header.stamp
-    req.cost_query_mode = costmap_3d.msg.GetPlanCost3DGoal.COST_QUERY_MODE_SIGNED_DISTANCE
-#    req.cost_query_mode = costmap_3d.msg.GetPlanCost3DGoal.COST_QUERY_MODE_DISTANCE
-#    req.cost_query_mode = costmap_3d.msg.GetPlanCost3DGoal.COST_QUERY_MODE_COLLISION_ONLY
+    req.cost_query_mode = costmap_3d_msgs.msg.GetPlanCost3DGoal.COST_QUERY_MODE_EXACT_SIGNED_DISTANCE
+#    req.cost_query_mode = costmap_3d_msgs.msg.GetPlanCost3DGoal.COST_QUERY_MODE_SIGNED_DISTANCE
+#    req.cost_query_mode = costmap_3d_msgs.msg.GetPlanCost3DGoal.COST_QUERY_MODE_DISTANCE
+#    req.cost_query_mode = costmap_3d_msgs.msg.GetPlanCost3DGoal.COST_QUERY_MODE_COLLISION_ONLY
     req.footprint_mesh_resource = ""
 #    req.footprint_mesh_resource = "package://ant_description/meshes/robot-get-close-to-obstacle-backward.stl"
     req.padding = 0.0
@@ -79,8 +80,8 @@ if __name__ == "__main__":
             pose.pose.orientation.z = q[2]
             pose.pose.orientation.w = q[3]
             req.poses.append(tf2_geometry_msgs.do_transform_pose(pose, xform))
-            regions.append(costmap_3d.msg.GetPlanCost3DGoal.COST_QUERY_REGION_ALL)
-            obstacles.append(costmap_3d.msg.GetPlanCost3DGoal.COST_QUERY_OBSTACLES_LETHAL_ONLY)
+            regions.append(costmap_3d_msgs.msg.GetPlanCost3DGoal.COST_QUERY_REGION_ALL)
+            obstacles.append(costmap_3d_msgs.msg.GetPlanCost3DGoal.COST_QUERY_OBSTACLES_LETHAL_ONLY)
             pose_array.poses.append(tf2_geometry_msgs.do_transform_pose(pose, xform).pose)
     req.cost_query_regions = regions
     req.cost_query_obstacles = obstacles
@@ -88,11 +89,15 @@ if __name__ == "__main__":
     pose_array_pub.publish(pose_array)
 
 #    rospy.loginfo("Request: " + str(req))
+    rospy.loginfo("Waiting for server...")
     get_cost_srv.wait_for_server()
+    rospy.loginfo("Send goal...")
     get_cost_srv.send_goal(req)
+    rospy.loginfo("Wait for result...")
     get_cost_srv.wait_for_result()
     res = get_cost_srv.get_result()
 
+    rospy.loginfo("Creating pointcloud...")
     point_cloud = sensor_msgs.msg.PointCloud()
     point_cloud.header = pose_array.header
     for p, cost in zip(pose_array.poses, res.pose_costs):
@@ -105,6 +110,7 @@ if __name__ == "__main__":
             z = -5.0;
         point_cloud.points.append(geometry_msgs.msg.Point32(p.position.x, p.position.y, z))
     point_cloud_pub.publish(point_cloud)
+    rospy.loginfo("Done!")
 
 #    rospy.loginfo("Result: " + str(res))
 #    rospy.loginfo("Number of lethals: " + str(len(res.lethal_indices)))

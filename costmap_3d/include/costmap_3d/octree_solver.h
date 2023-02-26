@@ -132,6 +132,13 @@ public:
    */
   void setUncertainOnly(bool uncertain_only) { uncertain_only_ = uncertain_only; }
 
+  /** Put the solver in exact signed distance mode.
+   *
+   * In exact signed distance mode, the tree search is not stopped on the first
+   * collision, but searched to exhaustion.
+   */
+  void setExactSignedDistance(bool exact_signed_distance) { exact_signed_distance_ = exact_signed_distance; }
+
 private:
   const NarrowPhaseSolver* solver_;
   InteriorCollisionFunction interior_collision_function_;
@@ -143,7 +150,9 @@ private:
   mutable fcl::DistanceResult<S>* dresult_ = nullptr;
   mutable fcl::Transform3<S> mesh_tf_inverse_;
   mutable double rel_err_factor_;
+  mutable bool interior_collision_;
   bool uncertain_only_ = false;
+  bool exact_signed_distance_ = false;
 
   inline bool isNodeConsideredOccupied(
       const fcl::OcTree<S>* tree,
@@ -186,6 +195,7 @@ void OcTreeMeshSolver<NarrowPhaseSolver>::distance(
   fcl::Transform3<S> mesh_tf = tf1.inverse() * tf2;
   mesh_tf_inverse_ = mesh_tf.inverse();
   rel_err_factor_ = 1.0 - drequest_->rel_err;
+  interior_collision_ = false;
 
   OcTreeMeshDistanceRecurse(tree1,
                             tree1->getRoot(),
@@ -350,7 +360,7 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
                         closest_p1, closest_p2, box_ptr, box_tf, triangle, tf2);
       }
 
-      return drequest_->isSatisfied(*dresult_);
+      return exact_signed_distance_ ? false : drequest_->isSatisfied(*dresult_);
     }
     else
       return false;
@@ -389,15 +399,18 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
       }
     }
     // Visit the octree from closest to furthest and quit early when we have
-    // crossed the result min distance
-    while(min_distance < rel_err_factor_ * dresult_->min_distance)
+    // crossed the result min distance. Do keep going though in exact signed
+    // distance mode when this part of the octree overlaps the root bounding
+    // volume of the mesh, as we must check every collision to find the deepest
+    // in exact signed distance mode.
+    while(min_distance < rel_err_factor_ * dresult_->min_distance || exact_signed_distance_ && min_distance <= 0)
     {
       next_min = std::numeric_limits<S>::max();
       for(unsigned int i = 0; i < nchildren; ++i)
       {
         if(distances[i] == min_distance)
         {
-          if(distances[i] < rel_err_factor_ * dresult_->min_distance)
+          if(distances[i] < rel_err_factor_ * dresult_->min_distance || exact_signed_distance_ && min_distance <= 0)
           {
             // Possible a better result is below, descend
             if(OcTreeMeshDistanceRecurse(tree1, children[i], child_bvs[i], tree2, root2, tf2, roi))
@@ -483,6 +496,7 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
       if (collision_distance < 0.0)
       {
         // A known interior collision.
+        interior_collision_ = true;
         const fcl::Triangle& tri_id = tree2->tri_indices[primitive_id];
         const fcl::Vector3<S>& p1 = tree2->vertices[tri_id[0]];
         const fcl::Vector3<S>& p2 = tree2->vertices[tri_id[1]];
@@ -494,7 +508,17 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
         dresult_->update(collision_distance, tree1, tree2, root1 - tree1->getRoot(), primitive_id,
                          box_tf.translation(), box_tf.translation(),
                          box_ptr, box_tf, triangle, tf2);
-        return true;
+        // For exact signed distance, keep going and checking other colliding cells
+        return !exact_signed_distance_;
+      }
+      // If the current result is interior to the mesh, there is no need to
+      // decend into the mesh, as any result will be less-penetrating.
+      // This check is only helpful when exact signed distance is enabled, as
+      // otherwise we would have already stopped once finding the first
+      // collision.
+      else if (interior_collision_)
+      {
+        return false;
       }
     }
     int children[2] = {
