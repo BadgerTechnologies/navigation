@@ -284,15 +284,19 @@ void Static2DLayer3D::occupancyGridCallback(const nav_msgs::OccupancyGridConstPt
     erase_cells.setTreeValues(NULL, &new_cells, false, true);
 
     // Add any cells in new_cells to unchanged_cells that match our current costmap state.
+    // Be careful with pruned leaves as they are not at the bottom depth of the tree.
     Costmap3D unchanged_cells(costmap_->getResolution());
     for(Costmap3D::leaf_iterator it=new_cells.begin_leafs(), end=new_cells.end_leafs(); it != end; ++it)
     {
       const Costmap3DIndex key(it.getKey());
       const Cost new_cost = it->getValue();
-      const Costmap3D::NodeType* const old_node = costmap_->search(key);
-      if (old_node && new_cost == old_node->getValue())
+      const unsigned depth = it.getDepth();
+      const Costmap3D::NodeType* const old_node = costmap_->search(key, depth);
+      // Only count a leaf old_node as a match (skip any where the new_cells
+      // has a pruned leaf but the old map does not).
+      if (old_node && !costmap_->nodeHasChildren(old_node) && new_cost == old_node->getValue())
       {
-	unchanged_cells.setNodeValue(key, new_cost);
+	unchanged_cells.setNodeValueAtDepth(key, depth, new_cost);
       }
     }
 
