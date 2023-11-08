@@ -437,9 +437,11 @@ private:
                                        int bins_per_radian)
     {
       geometry_msgs::Pose rv;
-      rv.position.x = static_cast<double>(static_cast<int64_t>(pose.position.x * bins_per_meter)) / bins_per_meter;
-      rv.position.y = static_cast<double>(static_cast<int64_t>(pose.position.y * bins_per_meter)) / bins_per_meter;
-      rv.position.z = static_cast<double>(static_cast<int64_t>(pose.position.z * bins_per_meter)) / bins_per_meter;
+      // std::round is slow on AVX2, but floor is fast, and where the
+      // quantization happens is not important
+      rv.position.x = std::floor(pose.position.x * bins_per_meter) / bins_per_meter;
+      rv.position.y = std::floor(pose.position.y * bins_per_meter) / bins_per_meter;
+      rv.position.z = std::floor(pose.position.z * bins_per_meter) / bins_per_meter;
 
       // Speed up the orientation binning by rounding the Cayley transform of
       // the quaternion versor instead of binning by Euler angles. It is more
@@ -457,22 +459,20 @@ private:
       // reasonable compromise between runtime and accuracy is what the above
       // calls the 'Basic Harmonic Mean' method.
       double w = pose.orientation.w;
-      Eigen::Vector3f v(
+      Eigen::Vector3d v(
           pose.orientation.x,
           pose.orientation.y,
           pose.orientation.z);
       if (w < 0.0)
       {
         w = -w;
-        v[0] = -v[0];
-        v[1] = -v[1];
-        v[2] = -v[2];
+        v = -v;
       }
       double s = 1.0 / (1.0 + w);
-      v *= s;
-      v[0] = static_cast<double>(static_cast<int64_t>(v[0] * bins_per_radian)) / bins_per_radian;
-      v[1] = static_cast<double>(static_cast<int64_t>(v[1] * bins_per_radian)) / bins_per_radian;
-      v[2] = static_cast<double>(static_cast<int64_t>(v[2] * bins_per_radian)) / bins_per_radian;
+      // To get roughly to radians scale the bins by 4, as the units of the
+      // transform are almost exactly 1/4 of a radian near the origin
+      v *= s * (bins_per_radian * 4);
+      v = v.array().floor() / (bins_per_radian * 4);
       double s_inv = 2.0 / (1.0 + v.dot(v));
       v *= s_inv;
       rv.orientation.w = s_inv - 1.0;
