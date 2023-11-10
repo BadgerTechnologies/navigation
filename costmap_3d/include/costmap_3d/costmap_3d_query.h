@@ -243,6 +243,30 @@ public:
    */
   void setQueryRegionDefaultScale(QueryRegionScale default_scale);
 
+  /** @brief Set the cache bin sizes.
+   *
+   * Note: this does not invalidate any caches but does grab an exclusive lock
+   * on the internal upgrade mutex.
+   */
+  void setCacheBinSize(
+      unsigned int pose_bins_per_meter = 4,
+      unsigned int pose_bins_per_radian = 4,
+      unsigned int pose_milli_bins_per_meter = 20,
+      unsigned int pose_milli_bins_per_radian = 20,
+      unsigned int pose_micro_bins_per_meter = 1024,
+      unsigned int pose_micro_bins_per_radian = 1024);
+
+  /** @brief Calculate the distance cache thresholds.
+   *
+   * Calculate the thresholds for the distance cache given details about the
+   * usage of the query object (two_d by default) and a threshold factor (which
+   * defaults to 1.05). The mode and the factor are memorized and the
+   * thresholds are re-calculated if the bin sizes are changed.
+   */
+  void setCacheThresholdParameters(
+      bool threshold_two_d_mode = false,
+      double threshold_factor = 1.05);
+
   /** @brief set the layered costmap update number.
    *
    * This is useful for buffered queries to store which costmap update they represent.
@@ -321,6 +345,12 @@ protected:
   /** @brief core of distance calculations */
   virtual double calculateDistance(const geometry_msgs::Pose& pose,
                                    const DistanceOptions& opts);
+
+  /** @brief recalculate the distance cache thresholds.
+   *
+   * The callermust already hold an exclusive lock on the upgrade_mutex_.
+   */
+  virtual void calculateCacheDistanceThresholds();
 
 private:
   // Common initialization between all constructors
@@ -711,6 +741,21 @@ private:
    * speed-up when distance queries are over the same space.
    */
   DistanceCache distance_cache_;
+  /**
+   * Whether the caller wants 2D mode for distance cache thresholds.
+   * When in 2D mode, the cache thresholds can be tighter and are calculated
+   * differently than when not in 2D mode. The default is to run in 3D mode.
+   * The milli and micro caches may be much more effective in 2D mode for a 2D
+   * robot, as only the radius of the robot matters if query poses will be for
+   * 2D navigation.
+   */
+  bool threshold_two_d_mode_ = false;
+  /**
+   * Safety factor for distance cache thresholds.
+   * The minimum value that prevents false-negative collisions is increased by
+   * this factor.
+   */
+  double threshold_factor_ = 1.05;
   /**
    * The milli-distance cache allows a very fast path when the nearest
    * obstacle is more than a threshold of distance away. This results in a

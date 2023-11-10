@@ -126,10 +126,106 @@ Costmap3DQuery::~Costmap3DQuery()
 void Costmap3DQuery::init()
 {
   clearStatistics();
-  milli_cache_threshold_ = 2.5 / pose_milli_bins_per_meter_;
-  micro_cache_threshold_ = 2.5 / pose_micro_bins_per_meter_;
   robot_model_halfspaces_.reset(new std::vector<fcl::Halfspace<FCLFloat>>);
   last_octomap_resolution_ = 0.0;
+}
+
+void Costmap3DQuery::setCacheBinSize(
+      unsigned int pose_bins_per_meter,
+      unsigned int pose_bins_per_radian,
+      unsigned int pose_milli_bins_per_meter,
+      unsigned int pose_milli_bins_per_radian,
+      unsigned int pose_micro_bins_per_meter,
+      unsigned int pose_micro_bins_per_radian)
+{
+  upgrade_lock upgradeable_lock(upgrade_mutex_);
+  if (pose_bins_per_meter != pose_bins_per_meter_ ||
+      pose_bins_per_radian != pose_bins_per_radian_ ||
+      pose_milli_bins_per_meter != pose_milli_bins_per_meter_ ||
+      pose_milli_bins_per_radian != pose_milli_bins_per_radian_ ||
+      pose_micro_bins_per_meter != pose_micro_bins_per_meter_ ||
+      pose_micro_bins_per_radian != pose_micro_bins_per_radian_)
+  {
+    upgrade_to_unique_lock write_lock(upgradeable_lock);
+    // There is no need to invalidate the existing cache entries. If the bins
+    // per meter change, either some or all of the new calls will miss the
+    // existing cache entries. The existing entries are all still correct, so
+    // keeping them is fine. Also, if only the thresholds change all the cache
+    // entries will still work.
+    pose_bins_per_meter_ = pose_bins_per_meter;
+    pose_bins_per_radian_ = pose_bins_per_radian;
+    pose_milli_bins_per_meter_ = pose_milli_bins_per_meter;
+    pose_milli_bins_per_radian_ = pose_milli_bins_per_radian;
+    pose_micro_bins_per_meter_ = pose_micro_bins_per_meter;
+    pose_micro_bins_per_radian_ = pose_micro_bins_per_radian;
+    ROS_INFO_STREAM("Set cache bins per meter: " << pose_bins_per_meter_);
+    ROS_INFO_STREAM("Set cache bins per radian: " << pose_bins_per_radian_);
+    ROS_INFO_STREAM("Set milli-cache bins per meter: " << pose_milli_bins_per_meter_);
+    ROS_INFO_STREAM("Set milli-cache bins per radian: " << pose_milli_bins_per_radian_);
+    ROS_INFO_STREAM("Set micro-cache bins per meter: " << pose_micro_bins_per_meter_);
+    ROS_INFO_STREAM("Set micro-cache bins per radian: " << pose_micro_bins_per_radian_);
+    calculateCacheDistanceThresholds();
+  }
+}
+
+void Costmap3DQuery::setCacheThresholdParameters(
+    bool threshold_two_d_mode,
+    double threshold_factor)
+{
+  upgrade_lock upgradeable_lock(upgrade_mutex_);
+  if (threshold_two_d_mode != threshold_two_d_mode_ ||
+      threshold_factor != threshold_factor_)
+  {
+    upgrade_to_unique_lock write_lock(upgradeable_lock);
+    threshold_two_d_mode_ = threshold_two_d_mode;
+    threshold_factor_ = threshold_factor;
+    ROS_INFO_STREAM("Set threshold 2D mode: " << threshold_two_d_mode_ ? "true" : "false");
+    ROS_INFO_STREAM("Set threshold factor: " << threshold_factor_);
+    calculateCacheDistanceThresholds();
+  }
+}
+
+void Costmap3DQuery::calculateCacheDistanceThresholds()
+{
+  // The distance thresholds must be greater than the maximum translation error
+  // plus the maximum rotation error, otherwise the query may return
+  // no-collision when one is actually present. In a robot with full
+  // three-dimensional movement this would equate to the length of the diagonal
+  // of a bin plus the chord length corresponding to the size of a rotational
+  // bin given the maximum radius of the robot mesh. For two-dimensional
+  // movement of a robot on a plane aligned with the costmap, the threshold
+  // is lower at only the diagonal of the bin projected into the plane as
+  // a square and the chord length given the radius of the robot mesh projected
+  // into the plane (the robot footprint radius).
+  Eigen::Vector4f origin(0.0, 0.0, 0.0, 0.0), max_pt(0.0, 0.0, 0.0, 0.0);
+  double diagonal_factor;
+  if (threshold_two_d_mode_)
+  {
+    // Create a 2D version of the mesh cloud by truncating the Z value.
+    pcl::PointCloud<pcl::PointXYZ> mesh_points_2d(*robot_mesh_points_);
+    for (auto& point : mesh_points_2d)
+    {
+      point.z = 0.0;
+    }
+    pcl::getMaxDistance(mesh_points_2d, origin, max_pt);
+    diagonal_factor = std::sqrt(2.0);
+  }
+  else
+  {
+    pcl::getMaxDistance(*robot_mesh_points_, origin, max_pt);
+    diagonal_factor = std::sqrt(3.0);
+  }
+  const Eigen::Vector3f max_pt3 = max_pt.head<3>();
+  double mesh_radius = max_pt3.norm();
+  milli_cache_threshold_ = diagonal_factor / pose_milli_bins_per_meter_ +
+    2.0 * mesh_radius * std::sin(0.5 / pose_milli_bins_per_radian_);
+  micro_cache_threshold_ = diagonal_factor / pose_micro_bins_per_meter_ +
+    2.0 * mesh_radius * std::sin(0.5 / pose_micro_bins_per_radian_);
+  milli_cache_threshold_ *= threshold_factor_;
+  micro_cache_threshold_ *= threshold_factor_;
+  ROS_INFO_STREAM("Calculated mesh radius: " << mesh_radius << "m");
+  ROS_INFO_STREAM("Calculated milli-distance cache threshold: " << milli_cache_threshold_ << "m");
+  ROS_INFO_STREAM("Calculated micro-distance cache threshold: " << micro_cache_threshold_ << "m");
 }
 
 void Costmap3DQuery::updateCostmap(const Costmap3DConstPtr& costmap_3d)
@@ -469,6 +565,7 @@ void Costmap3DQuery::updateMeshResource(const std::string& mesh_resource, double
             robot_model_->vertices[tri[1]],
             robot_model_->vertices[tri[2]]));
   }
+  calculateCacheDistanceThresholds();
 }
 
 std::string Costmap3DQuery::getFileNameFromPackageURL(const std::string& url)
