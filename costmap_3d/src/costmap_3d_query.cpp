@@ -36,6 +36,7 @@
  *********************************************************************/
 #include <costmap_3d/costmap_3d_query.h>
 #include <chrono>
+#include <sstream>
 #include <fcl/geometry/octree/octree.h>
 #include <fcl/narrowphase/collision.h>
 #include <fcl/narrowphase/distance_result.h>
@@ -455,9 +456,8 @@ void Costmap3DQuery::printStatistics()
       slow_micro_hits_since_clear_us_ +
       reuse_results_since_clear_us_ +
       exact_hits_since_clear_us_;
-  ROS_DEBUG_STREAM_NAMED(
-      "query_statistics",
-      "Costmap3DQuery statistics:"
+  std::ostringstream ss;
+  ss << "Costmap3DQuery statistics:"
       "\n\tqueries this cycle: " << queries_since_clear_ <<
       "\n\tcache misses: " << cache_misses <<
       "\n\tcache hits: " << hits_since_clear_ <<
@@ -486,7 +486,20 @@ void Costmap3DQuery::printStatistics()
       "\n\tmiss FCL BV distance calculations: " << miss_fcl_bv_distance_calculations_ <<
       "\n\tmiss FCL primative distance calculations: " << miss_fcl_primative_distance_calculations_ <<
       "\n\thit FCL BV distance calculations: " << hit_fcl_bv_distance_calculations_ <<
-      "\n\thit FCL primative distance calculations: " << hit_fcl_primative_distance_calculations_);
+      "\n\thit FCL primative distance calculations: " << hit_fcl_primative_distance_calculations_;
+  // Leverage the fact that the print arguments are only run if the log is
+  // enabled to make it simple to track if statistics tracking should be
+  // enabled. There is no need to pay for the atomic operations for statistics
+  // tracking if it is disabled.
+  bool should_track_statistics = false;
+  ROS_DEBUG_STREAM_NAMED(
+      "query_statistics",
+      // Weird construction here to get the side effect of setting
+      // should_track_statistics when the named debug is enabled. Also skips
+      // printing the first cycle as it will have invalid (zero) statistics
+      (((should_track_statistics = true) && track_statistics_) ? ss.str() :
+      "Costmap3DQuery: begin tracking statistics"));
+  track_statistics_ = should_track_statistics;
 }
 
 void Costmap3DQuery::addPCLPolygonToFCLTriangles(
@@ -709,9 +722,15 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
   // Make convenience aliases of some of the options
   const QueryRegion query_region = opts.query_region;
   const QueryObstacles query_obstacles = opts.query_obstacles;
+  // Let compiler optimize track_statistics by adding it to the stack.
+  const bool track_statistics = track_statistics_;
 
-  std::chrono::high_resolution_clock::time_point start_time = std::chrono::high_resolution_clock::now();
-  queries_since_clear_.fetch_add(1, std::memory_order_relaxed);
+  std::chrono::high_resolution_clock::time_point start_time;
+  if (track_statistics)
+  {
+    start_time = std::chrono::high_resolution_clock::now();
+    queries_since_clear_.fetch_add(1, std::memory_order_relaxed);
+  }
 
   // Use the passed in distance limit up to the "min" float (close to zero)
   // We do not want to use a zero or negative distance limit from the options
@@ -736,10 +755,13 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
       double distance = handleDistanceInteriorCollisions(
           tls_last_cache_entries_[query_region][query_obstacles],
           pose);
-      reuse_results_since_clear_.fetch_add(1, std::memory_order_relaxed);
-      reuse_results_since_clear_us_.fetch_add(
-          std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
-          std::memory_order_relaxed);
+      if (track_statistics)
+      {
+        reuse_results_since_clear_.fetch_add(1, std::memory_order_relaxed);
+        reuse_results_since_clear_us_.fetch_add(
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
+            std::memory_order_relaxed);
+      }
       return distance;
     }
     else
@@ -816,7 +838,10 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
   // FCL does not correctly handle an empty octomap.
   if (octree_to_query->size() == 0 || !octree_to_query->isNodeOccupied(octree_to_query->getRoot()))
   {
-    empties_since_clear_.fetch_add(1, std::memory_order_relaxed);
+    if (track_statistics)
+    {
+      empties_since_clear_.fetch_add(1, std::memory_order_relaxed);
+    }
     return std::numeric_limits<double>::max();
   }
 
@@ -828,10 +853,13 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     // Be sure to update the TLS last cache entry.
     // We do not need the write lock to update thread local storage.
     tls_last_cache_entries_[query_region][query_obstacles] = exact_cache_entry->second;
-    exact_hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
-    exact_hits_since_clear_us_.fetch_add(
-        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
-        std::memory_order_relaxed);
+    if (track_statistics)
+    {
+      exact_hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
+      exact_hits_since_clear_us_.fetch_add(
+          std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
+          std::memory_order_relaxed);
+    }
     return distance;
   }
 
@@ -858,10 +886,13 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
       // Be sure to update the TLS last cache entry.
       // We do not need the write lock to update thread local storage.
       tls_last_cache_entries_[query_region][query_obstacles] = milli_cache_entry->second;
-      fast_milli_hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
-      fast_milli_hits_since_clear_us_.fetch_add(
-          std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
-          std::memory_order_relaxed);
+      if (track_statistics)
+      {
+        fast_milli_hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
+        fast_milli_hits_since_clear_us_.fetch_add(
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
+            std::memory_order_relaxed);
+      }
       return distance;
     }
     else
@@ -891,10 +922,13 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
       // Be sure to update the TLS last cache entry.
       // We do not need the write lock to update thread local storage.
       tls_last_cache_entries_[query_region][query_obstacles] = micro_cache_entry->second;
-      fast_micro_hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
-      fast_micro_hits_since_clear_us_.fetch_add(
-          std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
-          std::memory_order_relaxed);
+      if (track_statistics)
+      {
+        fast_micro_hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
+        fast_micro_hits_since_clear_us_.fetch_add(
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
+            std::memory_order_relaxed);
+      }
       return distance;
     }
     else
@@ -1065,40 +1099,43 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     tls_last_cache_entries_[query_region][query_obstacles].clear();
   }
 
-  if (micro_hit)
+  if (track_statistics)
   {
-    slow_micro_hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
-    slow_micro_hits_since_clear_us_.fetch_add(
-        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
-        std::memory_order_relaxed);
-    hit_fcl_bv_distance_calculations_.fetch_add(result.bv_distance_calculations);
-    hit_fcl_primative_distance_calculations_.fetch_add(result.primative_distance_calculations);
-  }
-  else if (milli_hit)
-  {
-    slow_milli_hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
-    slow_milli_hits_since_clear_us_.fetch_add(
-        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
-        std::memory_order_relaxed);
-    hit_fcl_bv_distance_calculations_.fetch_add(result.bv_distance_calculations);
-    hit_fcl_primative_distance_calculations_.fetch_add(result.primative_distance_calculations);
-  }
-  else if (cache_hit)
-  {
-    hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
-    hits_since_clear_us_.fetch_add(
-        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
-        std::memory_order_relaxed);
-    hit_fcl_bv_distance_calculations_.fetch_add(result.bv_distance_calculations);
-    hit_fcl_primative_distance_calculations_.fetch_add(result.primative_distance_calculations);
-  }
-  else
-  {
-    misses_since_clear_us_.fetch_add(
-        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
-        std::memory_order_relaxed);
-    miss_fcl_bv_distance_calculations_.fetch_add(result.bv_distance_calculations);
-    miss_fcl_primative_distance_calculations_.fetch_add(result.primative_distance_calculations);
+    if (micro_hit)
+    {
+      slow_micro_hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
+      slow_micro_hits_since_clear_us_.fetch_add(
+          std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
+          std::memory_order_relaxed);
+      hit_fcl_bv_distance_calculations_.fetch_add(result.bv_distance_calculations);
+      hit_fcl_primative_distance_calculations_.fetch_add(result.primative_distance_calculations);
+    }
+    else if (milli_hit)
+    {
+      slow_milli_hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
+      slow_milli_hits_since_clear_us_.fetch_add(
+          std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
+          std::memory_order_relaxed);
+      hit_fcl_bv_distance_calculations_.fetch_add(result.bv_distance_calculations);
+      hit_fcl_primative_distance_calculations_.fetch_add(result.primative_distance_calculations);
+    }
+    else if (cache_hit)
+    {
+      hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
+      hits_since_clear_us_.fetch_add(
+          std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
+          std::memory_order_relaxed);
+      hit_fcl_bv_distance_calculations_.fetch_add(result.bv_distance_calculations);
+      hit_fcl_primative_distance_calculations_.fetch_add(result.primative_distance_calculations);
+    }
+    else
+    {
+      misses_since_clear_us_.fetch_add(
+          std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
+          std::memory_order_relaxed);
+      miss_fcl_bv_distance_calculations_.fetch_add(result.bv_distance_calculations);
+      miss_fcl_primative_distance_calculations_.fetch_add(result.primative_distance_calculations);
+    }
   }
 
   return distance;

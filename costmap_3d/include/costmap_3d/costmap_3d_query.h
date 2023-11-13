@@ -792,6 +792,8 @@ private:
   // Statistics gathered between clearing cycles
   void printStatistics();
   void clearStatistics();
+  // Only track statistics if the named logger is enabled.
+  bool track_statistics_ = false;
   // Use std::atomic so we can increment with only the read lock held.
   // The write lock will be held when resetting these so they all reset
   // atomically
