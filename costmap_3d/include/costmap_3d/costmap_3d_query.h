@@ -439,6 +439,7 @@ private:
       binned_pose_ = binPose(pose, bins_per_meter, bins_per_radian);
       query_region_ = query_region;
       query_obstacles_ = query_obstacles;
+      hash_ = hash_value();
     }
     // Constructor for the "exact" cache where the poses are not binned
     DistanceCacheKey(const geometry_msgs::Pose& pose, QueryRegion query_region, bool query_obstacles)
@@ -446,20 +447,11 @@ private:
       binned_pose_ = pose;
       query_region_ = query_region;
       query_obstacles_ = query_obstacles;
+      hash_ = hash_value();
     }
 
-    size_t hash_value() const
-    {
-      size_t rv = (size_t)query_region_ << 8 | (size_t)query_obstacles_;
-      hash_combine(rv, binned_pose_.orientation.x);
-      hash_combine(rv, binned_pose_.orientation.y);
-      hash_combine(rv, binned_pose_.orientation.z);
-      hash_combine(rv, binned_pose_.orientation.w);
-      hash_combine(rv, binned_pose_.position.x);
-      hash_combine(rv, binned_pose_.position.y);
-      hash_combine(rv, binned_pose_.position.z);
-      return rv;
-    }
+    // Directly store the hash value in a public location for speed.
+    size_t hash_;
 
     bool operator==(const DistanceCacheKey& rhs) const
     {
@@ -479,14 +471,42 @@ private:
     QueryRegion query_region_;
     bool query_obstacles_;
 
-    //! Borrow boost's hash_combine directly to avoid having to pull in boost
-    template <class T>
-    inline void hash_combine(std::size_t& seed, const T& v) const
+    size_t hash_value() const
     {
-      std::hash<T> hasher;
-      seed ^= hasher(v) + 0x9e3779b9 + (seed<<6) + (seed>>2);
+      // Compute the hash off the raw bits by treating the doubles as if they
+      // were unsigned 64-bit integers, multiplying them by medium sized
+      // consecutive primes and summing them up. This operation is SIMD
+      // friendly and much faster than std::hash, and works well for the types
+      // of floating point coordinates encountered in Costmap queries.
+      union {double d; uint64_t uint;} u[8] = {
+          binned_pose_.orientation.x,
+          binned_pose_.orientation.y,
+          binned_pose_.orientation.z,
+          binned_pose_.orientation.w,
+          binned_pose_.position.x,
+          binned_pose_.position.y,
+          binned_pose_.position.z,
+          {.uint = {static_cast<uint64_t>(query_region_) << 8 | static_cast<uint64_t>(query_obstacles_)}},
+      };
+      uint32_t primes[8] = {
+          30011,
+          30013,
+          30029,
+          30047,
+          30059,
+          30071,
+          30089,
+          30091,
+      };
+      // Make the hash SIMD friendly by using primes and addition instead of
+      // hash_combine which must be done sequentially.
+      size_t rv = 0;
+      for (unsigned i=0; i<8; ++i)
+      {
+        rv += u[i].uint * primes[i];
+      }
+      return rv;
     }
-
     // Bin a pose.
     inline geometry_msgs::Pose binPose(const geometry_msgs::Pose& pose,
                                        int bins_per_meter,
@@ -543,7 +563,7 @@ private:
   {
     size_t operator()(const DistanceCacheKey& key) const
     {
-      return key.hash_value();
+      return key.hash_;
     }
   };
 
