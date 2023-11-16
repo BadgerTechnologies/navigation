@@ -60,7 +60,7 @@ namespace costmap_3d
 // statics.
 thread_local unsigned int Costmap3DQuery::tls_last_layered_costmap_update_number_ = 0;
 thread_local Costmap3DQuery* Costmap3DQuery::tls_last_instance_ = nullptr;
-thread_local Costmap3DQuery::DistanceCacheEntry* Costmap3DQuery::tls_last_cache_entries_[Costmap3DQuery::MAX][Costmap3DQuery::OBSTACLES_MAX] = {nullptr};
+thread_local Costmap3DQuery::DistanceCacheEntry Costmap3DQuery::tls_last_cache_entries_[Costmap3DQuery::MAX][Costmap3DQuery::OBSTACLES_MAX] = {};
 
 Costmap3DQuery::Costmap3DQuery(
     const LayeredCostmap3D* layered_costmap_3d,
@@ -285,7 +285,7 @@ void Costmap3DQuery::checkCostmap(Costmap3DQuery::upgrade_lock& upgrade_lock,
     {
       for (unsigned int j=0; j<OBSTACLES_MAX; ++j)
       {
-        tls_last_cache_entries_[i][j] = nullptr;
+        tls_last_cache_entries_[i][j].clear();
       }
     }
     tls_last_layered_costmap_update_number_ = last_layered_costmap_update_number_;
@@ -598,9 +598,52 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
   const QueryRegion query_region = opts.query_region;
   const QueryObstacles query_obstacles = opts.query_obstacles;
 
-  upgrade_lock upgrade_lock(upgrade_mutex_);
   std::chrono::high_resolution_clock::time_point start_time = std::chrono::high_resolution_clock::now();
   queries_since_clear_.fetch_add(1, std::memory_order_relaxed);
+
+  // Use the passed in distance limit up to the "min" float (close to zero)
+  // We do not want to use a zero or negative distance limit from the options
+  // because that will prevent us from correctly searching the octomap/mesh
+  FCLFloat pose_distance = std::max(opts.distance_limit, std::numeric_limits<FCLFloat>::min());
+
+  // Handle reuse results first before acquiring any locks.
+  // It is already up to the caller using reuse results to ensure the costmap
+  // hasn't updated in-between calls, so it is pointless to acquire the lock to
+  // check.
+  if (opts.reuse_past_result)
+  {
+    // Reuse the past result (if there was one) and directly return the new distance.
+    // In cases where the caller knows this is the correct behavior (such as
+    // when making minor perturbations to estimate derivatives), this is
+    // faster than having to calculate the hash and find the cache entry.
+    // Do not check if the entry is in the query region still, it is assumed
+    // the caller wants to ignore the potential error this would cause, as this
+    // interface is mainly useful for very small perturbations.
+    if (tls_last_cache_entries_[query_region][query_obstacles])
+    {
+      double distance = handleDistanceInteriorCollisions(
+          tls_last_cache_entries_[query_region][query_obstacles],
+          pose);
+      reuse_results_since_clear_.fetch_add(1, std::memory_order_relaxed);
+      reuse_results_since_clear_us_.fetch_add(
+          std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
+          std::memory_order_relaxed);
+      return distance;
+    }
+    else
+    {
+      // It is possible for the caller to have just previously called on this
+      // thread and got no results because of the way the query was limited.
+      // Assume that this query is limited the same way, and return the current
+      // pose_distance, which will be set from the passed in distance limit.
+      // This will be the exact same distance returned by the previous call,
+      // which is the desired result when the previous query resulted in
+      // nothing found.
+      return pose_distance;
+    }
+  }
+
+  upgrade_lock upgrade_lock(upgrade_mutex_);
   if (!robot_model_)
   {
     // We failed to create a robot model.
@@ -634,44 +677,6 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     return std::numeric_limits<double>::max();
   }
 
-  // Use the passed in distance limit up to the "min" float (close to zero)
-  // We do not want to use a zero or negative distance limit from the options
-  // because that will prevent us from correctly searching the octomap/mesh
-  FCLFloat pose_distance = std::max(opts.distance_limit, std::numeric_limits<FCLFloat>::min());
-
-  if (opts.reuse_past_result)
-  {
-    // Reuse the past result (if there was one) and directly return the new distance.
-    // In cases where the caller knows this is the correct behavior (such as
-    // when making minor perturbations to estimate derivatives), this is
-    // faster than having to calculate the hash and find the cache entry.
-    // Do not check if the entry is in the query region still, it is assumed
-    // the caller wants to ignore the potential error this would cause, as this
-    // interface is mainly useful for very small perturbations.
-    if (tls_last_cache_entries_[query_region][query_obstacles])
-    {
-      double distance = handleDistanceInteriorCollisions(
-          *tls_last_cache_entries_[query_region][query_obstacles],
-          pose);
-      reuse_results_since_clear_.fetch_add(1, std::memory_order_relaxed);
-      reuse_results_since_clear_us_.fetch_add(
-          std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
-          std::memory_order_relaxed);
-      return distance;
-    }
-    else
-    {
-      // It is possible for the caller to have just previously called on this
-      // thread and got no results because of the way the query was limited.
-      // Assume that this query is limited the same way, and return the current
-      // pose_distance, which will be set from the passed in distance limit.
-      // This will be the exact same distance returned by the previous call,
-      // which is the desired result when the previous query resulted in
-      // nothing found.
-      return pose_distance;
-    }
-  }
-
   DistanceCacheKey exact_cache_key(pose, query_region, query_obstacles);
   auto exact_cache_entry = exact_distance_cache_.find(exact_cache_key);
   if (exact_cache_entry != exact_distance_cache_.end())
@@ -679,7 +684,7 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     double distance = exact_cache_entry->second.distance;
     // Be sure to update the TLS last cache entry.
     // We do not need the write lock to update thread local storage.
-    tls_last_cache_entries_[query_region][query_obstacles] = &exact_cache_entry->second;
+    tls_last_cache_entries_[query_region][query_obstacles] = exact_cache_entry->second;
     exact_hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
     exact_hits_since_clear_us_.fetch_add(
         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
@@ -709,7 +714,7 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     {
       // Be sure to update the TLS last cache entry.
       // We do not need the write lock to update thread local storage.
-      tls_last_cache_entries_[query_region][query_obstacles] = &milli_cache_entry->second;
+      tls_last_cache_entries_[query_region][query_obstacles] = milli_cache_entry->second;
       fast_milli_hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
       fast_milli_hits_since_clear_us_.fetch_add(
           std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
@@ -742,7 +747,7 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     {
       // Be sure to update the TLS last cache entry.
       // We do not need the write lock to update thread local storage.
-      tls_last_cache_entries_[query_region][query_obstacles] = &micro_cache_entry->second;
+      tls_last_cache_entries_[query_region][query_obstacles] = micro_cache_entry->second;
       fast_micro_hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
       fast_micro_hits_since_clear_us_.fetch_add(
           std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
@@ -793,15 +798,15 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
   // better match. This is especialy useful if we miss every cache, but have a
   // last entry, and the queries are being done on a path.
   if (tls_last_cache_entries_[query_region][query_obstacles] &&
-      rois.distanceCacheEntryInside(*tls_last_cache_entries_[query_region][query_obstacles]))
+      rois.distanceCacheEntryInside(tls_last_cache_entries_[query_region][query_obstacles]))
   {
     double last_entry_distance = handleDistanceInteriorCollisions(
-        *tls_last_cache_entries_[query_region][query_obstacles],
+        tls_last_cache_entries_[query_region][query_obstacles],
         pose);
     if (last_entry_distance < pose_distance)
     {
       pose_distance = last_entry_distance;
-      tls_last_cache_entries_[query_region][query_obstacles]->setupResult(&result);
+      tls_last_cache_entries_[query_region][query_obstacles].setupResult(&result);
     }
   }
 
@@ -897,8 +902,8 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
       micro_distance_cache_[micro_cache_key] = new_entry;
       milli_distance_cache_[milli_cache_key] = new_entry;
       exact_distance_cache_[exact_cache_key] = new_entry;
-      tls_last_cache_entries_[query_region][query_obstacles] = &exact_distance_cache_[exact_cache_key];
     }
+    tls_last_cache_entries_[query_region][query_obstacles] = new_entry;
   }
   else
   {
@@ -909,7 +914,7 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     // must set the last cache to nullptr to prevent erroneously using some
     // other result.
     // No need to lock TLS
-    tls_last_cache_entries_[query_region][query_obstacles] = nullptr;
+    tls_last_cache_entries_[query_region][query_obstacles].clear();
   }
 
   if (micro_hit)

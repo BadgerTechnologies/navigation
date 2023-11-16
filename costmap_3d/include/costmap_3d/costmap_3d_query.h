@@ -539,6 +539,15 @@ private:
       result->tf1 = octomap_box_tf;
       result->b2 = mesh_triangle_id;
     }
+    void clear()
+    {
+      octomap_box.reset();
+      mesh_triangle.reset();
+    }
+    explicit operator bool() const
+    {
+      return octomap_box && mesh_triangle;
+    }
     bool getCostmapIndexAndDepth(const octomap::OcTreeSpace& octree_space, Costmap3DIndex* index, unsigned int* depth)
     {
       if (octomap_box)
@@ -671,7 +680,7 @@ private:
   static thread_local unsigned int tls_last_layered_costmap_update_number_;
   static thread_local Costmap3DQuery* tls_last_instance_;
   /// Indexed by QueryRegion
-  static thread_local DistanceCacheEntry* tls_last_cache_entries_[MAX][OBSTACLES_MAX];
+  static thread_local DistanceCacheEntry tls_last_cache_entries_[MAX][OBSTACLES_MAX];
   /**
    * The distance cache allows us to find a very good distance guess quickly.
    * The cache memorizes to a hash table for a pose rounded to the number of
