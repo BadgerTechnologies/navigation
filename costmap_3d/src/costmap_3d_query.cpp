@@ -262,6 +262,32 @@ bool Costmap3DQuery::needCheckCostmap(std::shared_ptr<const octomap::OcTree> new
   return need_update;
 }
 
+// Borrowed from https://artificial-mind.net/blog/2021/10/09/unordered-map-badness
+template <class Map>
+static double unordered_map_badness(Map const& map)
+{
+  auto const lambda = map.size() / double(map.bucket_count());
+
+  auto cost = 0.;
+  for (auto const& entry : map)
+    cost += map.bucket_size(map.bucket(entry.first));
+  cost /= map.size();
+
+  return std::max(0., cost / (1 + lambda) - 1);
+}
+
+template <class Map>
+static void printDistanceCacheDebug(
+    const Map& cache,
+    const std::string& prefix)
+{
+  ROS_DEBUG_STREAM_NAMED(
+      "query_distance_cache", prefix <<
+      " size: " << cache.size() <<
+      " bucket count: " << cache.bucket_count() <<
+      " badness: " << unordered_map_badness(cache));
+}
+
 // Caller must already hold an upgradable shared lock via the passed
 // upgrade_lock, which we can use to upgrade to exclusive access if necessary.
 void Costmap3DQuery::checkCostmap(Costmap3DQuery::upgrade_lock& upgrade_lock,
@@ -310,6 +336,8 @@ void Costmap3DQuery::checkCostmap(Costmap3DQuery::upgrade_lock& upgrade_lock,
     // the tree is limited, the size of the cache has a natural limit. If this
     // limit is ever too large, a separate cache size may need to be set.
     {
+      printDistanceCacheDebug(distance_cache_, "distance cache: ");
+      size_t start_size = distance_cache_.size();
       auto it = distance_cache_.begin();
       while (it != distance_cache_.end())
       {
@@ -332,6 +360,8 @@ void Costmap3DQuery::checkCostmap(Costmap3DQuery::upgrade_lock& upgrade_lock,
         else
           ++it;
       }
+      ROS_DEBUG_STREAM_NAMED("query_distance_cache",
+          "distance cache removed " << start_size - distance_cache_.size() << " entries");
     }
 
     // Delete any milli distance cache entries that have had their
@@ -342,6 +372,8 @@ void Costmap3DQuery::checkCostmap(Costmap3DQuery::upgrade_lock& upgrade_lock,
     // updated after a successful query, so the staleness of the bound will be
     // fixed the next query that hits the cache.
     {
+      printDistanceCacheDebug(milli_distance_cache_, "milli-distance cache: ");
+      size_t start_size = milli_distance_cache_.size();
       auto it = milli_distance_cache_.begin();
       while (it != milli_distance_cache_.end())
       {
@@ -370,14 +402,18 @@ void Costmap3DQuery::checkCostmap(Costmap3DQuery::upgrade_lock& upgrade_lock,
           ++it;
         }
       }
+      ROS_DEBUG_STREAM_NAMED("query_distance_cache",
+          "milli-distance cache removed " << start_size - milli_distance_cache_.size() << " entries");
     }
 
     // Drop the micro cache. It is not worth iterating over the (relatively
     // large) micro cache.  New entries in the costmap make the upper bound
     // fairly worthless and we can not use the fast path which is the micro
     // cache's strong point.
+    printDistanceCacheDebug(micro_distance_cache_, "micro-distance cache: ");
     micro_distance_cache_.clear();
     // We must drop the exact cache after the costmap has changed
+    printDistanceCacheDebug(exact_distance_cache_, "exact distance cache: ");
     exact_distance_cache_.clear();
     printStatistics();
     clearStatistics();
