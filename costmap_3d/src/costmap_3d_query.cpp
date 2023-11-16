@@ -140,12 +140,9 @@ void Costmap3DQuery::updateCostmap(const Costmap3DConstPtr& costmap_3d)
   checkCostmap(upgrade_lock, new_octree);
 }
 
-// Caller must already hold an upgradable shared lock via the passed
-// upgrade_lock, which we can use to upgrade to exclusive access if necessary.
-void Costmap3DQuery::checkCostmap(Costmap3DQuery::upgrade_lock& upgrade_lock,
-                                  std::shared_ptr<const octomap::OcTree> new_octree)
+// Caller must hold at least a shared lock
+bool Costmap3DQuery::needCheckCostmap(std::shared_ptr<const octomap::OcTree> new_octree)
 {
-  // First check if we need to update w/ just the read lock held
   bool need_update = false;
   {
     if (layered_costmap_3d_)
@@ -165,6 +162,18 @@ void Costmap3DQuery::checkCostmap(Costmap3DQuery::upgrade_lock& upgrade_lock,
       }
     }
   }
+  return need_update;
+}
+
+// Caller must already hold an upgradable shared lock via the passed
+// upgrade_lock, which we can use to upgrade to exclusive access if necessary.
+void Costmap3DQuery::checkCostmap(Costmap3DQuery::upgrade_lock& upgrade_lock,
+                                  std::shared_ptr<const octomap::OcTree> new_octree)
+{
+  // Check if we need to update w/ just the upgrade lock held. This way only
+  // one thread has to pay to upgrade to an exclusive lock (which forces no new
+  // readers and waits for all existing readers to finish).
+  bool need_update = needCheckCostmap(new_octree);
   if (need_update)
   {
     // get write access
@@ -274,6 +283,12 @@ void Costmap3DQuery::checkCostmap(Costmap3DQuery::upgrade_lock& upgrade_lock,
       last_layered_costmap_update_number_ = layered_costmap_3d_->getNumberOfUpdates();
     }
   }
+  // Must re-check TLS as the layred costmap update number has changed.
+  checkTLS();
+}
+
+void Costmap3DQuery::checkTLS()
+{
   // Check if any thread local state must be invalidated.
   // We must handle if either the costmap has been updated since this thread's
   // storage was invalidated, or if a different instance of the object is
@@ -643,25 +658,56 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     }
   }
 
-  upgrade_lock upgrade_lock(upgrade_mutex_);
+  shared_lock read_lock(upgrade_mutex_);
+
   if (!robot_model_)
   {
     // We failed to create a robot model.
     // The failure would have been logged, so simply return collision.
     return -1.0;
   }
-  checkCostmap(upgrade_lock);
-  std::shared_ptr<const octomap::OcTree> octree_to_query;
-  if (query_obstacles == NONLETHAL_ONLY)
+
+  // Check if an upgrade lock will be necessary. Do not do this with an upgrade
+  // lock held, as only one thread can have an upgrade lock at a time.
+  bool need_upgrade_lock = false;
+  if (needCheckCostmap())
   {
-    if (!nonlethal_octree_ptr_)
+    need_upgrade_lock = true;
+  }
+  if (query_obstacles == NONLETHAL_ONLY && !nonlethal_octree_ptr_)
+  {
+    need_upgrade_lock = true;
+  }
+
+  if (need_upgrade_lock)
+  {
+    // Drop the shared lock to get an upgrade lock. The only safe way to do
+    // this and avoid deadlock/livelock is to drop the shared lock and then get
+    // an upgrade lock. Because the lock is dropped, we must re-check the
+    // conditions after acquiring the upgrade mutex (as it may no longer be
+    // necessary). Because this very slow path is only encountered at most once
+    // or twice per update cycle (depending on if non-lethal queries are
+    // issued and if this is a buffered query) this is OK.
+    read_lock.unlock();
+    read_lock.release();
+    upgrade_lock upgradeable_lock(upgrade_mutex_);
+    checkCostmap(upgradeable_lock);
+    if (query_obstacles == NONLETHAL_ONLY && !nonlethal_octree_ptr_)
     {
       // We do not yet have a nonlethal copy of the tree, create one now and save it until
       // the next costmap update. In order to do this safely we must grab the write lock.
       // This is OK, it will only happen once per update cycle.
-      upgrade_to_unique_lock write_lock(upgrade_lock);
+      upgrade_to_unique_lock write_lock(upgradeable_lock);
       nonlethal_octree_ptr_ = std::static_pointer_cast<const Costmap3D>(octree_ptr_)->nonlethalOnly();
     }
+    // Re-acquire the shared lock. This can be done atomically by downgrading
+    // the upgrade lock to a shared lock.
+    read_lock = shared_lock(std::move(upgradeable_lock));
+  }
+
+  std::shared_ptr<const octomap::OcTree> octree_to_query;
+  if (query_obstacles == NONLETHAL_ONLY)
+  {
     octree_to_query = nonlethal_octree_ptr_;
   }
   else
@@ -796,7 +842,9 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
 
   // Check the distance from the last cache entry too, and use it if it is a
   // better match. This is especialy useful if we miss every cache, but have a
-  // last entry, and the queries are being done on a path.
+  // last entry, and the queries are being done on a path. First check the TLS
+  // which will invalidate it if it is no longer valid.
+  checkTLS();
   if (tls_last_cache_entries_[query_region][query_obstacles] &&
       rois.distanceCacheEntryInside(tls_last_cache_entries_[query_region][query_obstacles]))
   {
@@ -820,7 +868,10 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
   // locked, or to have a copy (which by definition won't change). It allows
   // for much more parallelism to keep the read lock dropped during the
   // distance query.
-  upgrade_lock.unlock();
+  read_lock.unlock();
+  // Release the mutex, when it is needed again below it will be passed back
+  // into a new lock.
+  read_lock.release();
 
   request.rel_err = opts.relative_error;
   request.enable_nearest_points = true;
