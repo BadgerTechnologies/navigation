@@ -365,9 +365,8 @@ void Costmap3DQuery::checkCostmap(Costmap3DQuery::upgrade_lock& upgrade_lock,
         }
         else
         {
-          // The code only uses the fast-path when the recorded distance is
-          // over the milli cache threshold, so set to the threshold.
-          it->second.distance = milli_cache_threshold_;
+          // Fast-path only used for finite recorded distance
+          it->second.distance = std::numeric_limits<FCLFloat>::infinity();
           ++it;
         }
       }
@@ -899,7 +898,10 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     double distance = handleDistanceInteriorCollisions(
         cache_entry,
         pose);
-    if (cache_entry.distance > milli_cache_threshold_)
+    if ((!opts.exact_signed_distance && distance <= 0.0) ||
+        std::isfinite(cache_entry.distance) && (
+          cache_entry.distance > milli_cache_threshold_ ||
+          distance > milli_cache_threshold_))
     {
       // Be sure to update the TLS last cache entry.
       // We do not need the write lock to update thread local storage.
@@ -943,7 +945,9 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     double distance = handleDistanceInteriorCollisions(
         cache_entry,
         pose);
-    if (cache_entry.distance > micro_cache_threshold_)
+    if ((!opts.exact_signed_distance && distance <= 0.0) ||
+        cache_entry.distance > micro_cache_threshold_ ||
+        distance > micro_cache_threshold_)
     {
       // Be sure to update the TLS last cache entry.
       // We do not need the write lock to update thread local storage.
