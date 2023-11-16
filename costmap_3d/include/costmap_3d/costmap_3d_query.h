@@ -303,6 +303,12 @@ public:
 protected:
   const LayeredCostmap3D* layered_costmap_3d_;
 
+  // Use boost's upgrade_mutex and not std::shared_mutex. The way
+  // std::shared_mutex is defined allows implementations to starve writers, and
+  // at least some implementations do allow readers to starve writers. The
+  // boost upgrade_mutex is guaranteed to not do so. When a thread tries to
+  // exclusive lock an boost::upgrade_mutex it blocks all new readers until
+  // after the writer drops the exclusive lock.
   using upgrade_mutex = boost::upgrade_mutex;
   using shared_lock = boost::shared_lock<upgrade_mutex>;
   using upgrade_lock = boost::upgrade_lock<upgrade_mutex>;
@@ -741,6 +747,7 @@ private:
    * speed-up when distance queries are over the same space.
    */
   DistanceCache distance_cache_;
+  upgrade_mutex distance_cache_mutex_;
   /**
    * Whether the caller wants 2D mode for distance cache thresholds.
    * When in 2D mode, the cache thresholds can be tighter and are calculated
@@ -764,6 +771,7 @@ private:
    */
   double milli_cache_threshold_;
   DistanceCache milli_distance_cache_;
+  upgrade_mutex milli_distance_cache_mutex_;
   /**
    * The micro-distance cache allows a very fast path when the nearest
    * obstacle is more than a threshold of distance away. This results in a
@@ -772,10 +780,12 @@ private:
    */
   double micro_cache_threshold_;
   DistanceCache micro_distance_cache_;
+  upgrade_mutex micro_distance_cache_mutex_;
   // Immediately return the distance for an exact duplicate query
   // This avoid any calculation in the case that the calculation has been done
   // since the costmap was updated.
   ExactDistanceCache exact_distance_cache_;
+  upgrade_mutex exact_distance_cache_mutex_;
   unsigned int last_layered_costmap_update_number_;
   //! Distance cache bins per meter for binning the pose's position
   unsigned int pose_bins_per_meter_;

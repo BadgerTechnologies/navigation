@@ -275,6 +275,13 @@ void Costmap3DQuery::checkCostmap(Costmap3DQuery::upgrade_lock& upgrade_lock,
   {
     // get write access
     upgrade_to_unique_lock write_lock(upgrade_lock);
+    // While it isn't possible for the cache locks to be held once the overall
+    // upgrade mutex is locked (since they are only ever grabbed while the
+    // shared read lock is held), go ahead and lock them too for completeness.
+    unique_lock distance_cache_lock(distance_cache_mutex_);
+    unique_lock milli_distance_cache_lock(milli_distance_cache_mutex_);
+    unique_lock micro_distance_cache_lock(micro_distance_cache_mutex_);
+    unique_lock exact_distance_cache_lock(exact_distance_cache_mutex_);
 
     if (layered_costmap_3d_)
     {
@@ -846,21 +853,24 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
   }
 
   DistanceCacheKey exact_cache_key(pose, query_region, query_obstacles);
-  auto exact_cache_entry = exact_distance_cache_.find(exact_cache_key);
-  if (exact_cache_entry != exact_distance_cache_.end())
   {
-    double distance = exact_cache_entry->second.distance;
-    // Be sure to update the TLS last cache entry.
-    // We do not need the write lock to update thread local storage.
-    tls_last_cache_entries_[query_region][query_obstacles] = exact_cache_entry->second;
-    if (track_statistics)
+    shared_lock cache_read_lock(exact_distance_cache_mutex_);
+    auto exact_cache_entry = exact_distance_cache_.find(exact_cache_key);
+    if (exact_cache_entry != exact_distance_cache_.end())
     {
-      exact_hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
-      exact_hits_since_clear_us_.fetch_add(
-          std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
-          std::memory_order_relaxed);
+      double distance = exact_cache_entry->second.distance;
+      // Be sure to update the TLS last cache entry.
+      // We do not need the write lock to update thread local storage.
+      tls_last_cache_entries_[query_region][query_obstacles] = exact_cache_entry->second;
+      if (track_statistics)
+      {
+        exact_hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
+        exact_hits_since_clear_us_.fetch_add(
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
+            std::memory_order_relaxed);
+      }
+      return distance;
     }
-    return distance;
   }
 
   fcl::DistanceRequest<FCLFloat> request;
@@ -873,19 +883,27 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
   RegionsOfInterestAtPose rois(query_region, query_region_scale_, pose);
 
   DistanceCacheKey milli_cache_key(pose, query_region, query_obstacles, pose_milli_bins_per_meter_, pose_milli_bins_per_radian_);
-  auto milli_cache_entry = milli_distance_cache_.find(milli_cache_key);
   bool milli_hit = false;
-  if (milli_cache_entry != milli_distance_cache_.end() &&
-      rois.distanceCacheEntryInside(milli_cache_entry->second))
+  DistanceCacheEntry cache_entry;
+  {
+    shared_lock cache_read_lock(milli_distance_cache_mutex_);
+    auto milli_cache_entry = milli_distance_cache_.find(milli_cache_key);
+    if (milli_cache_entry != milli_distance_cache_.end())
+    {
+      cache_entry = milli_cache_entry->second;
+    }
+  }
+  if (cache_entry &&
+      rois.distanceCacheEntryInside(cache_entry))
   {
     double distance = handleDistanceInteriorCollisions(
-        milli_cache_entry->second,
+        cache_entry,
         pose);
-    if (milli_cache_entry->second.distance > milli_cache_threshold_)
+    if (cache_entry.distance > milli_cache_threshold_)
     {
       // Be sure to update the TLS last cache entry.
       // We do not need the write lock to update thread local storage.
-      tls_last_cache_entries_[query_region][query_obstacles] = milli_cache_entry->second;
+      tls_last_cache_entries_[query_region][query_obstacles] = cache_entry;
       if (track_statistics)
       {
         fast_milli_hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
@@ -903,25 +921,33 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
       {
         milli_hit = true;
         pose_distance = distance;
-        milli_cache_entry->second.setupResult(&result);
+        cache_entry.setupResult(&result);
       }
     }
   }
 
   DistanceCacheKey micro_cache_key(pose, query_region, query_obstacles, pose_micro_bins_per_meter_, pose_micro_bins_per_radian_);
-  auto micro_cache_entry = micro_distance_cache_.find(micro_cache_key);
   bool micro_hit = false;
-  if (micro_cache_entry != micro_distance_cache_.end() &&
-      rois.distanceCacheEntryInside(micro_cache_entry->second))
+  cache_entry.clear();
+  {
+    shared_lock cache_read_lock(micro_distance_cache_mutex_);
+    auto micro_cache_entry = micro_distance_cache_.find(micro_cache_key);
+    if (micro_cache_entry != micro_distance_cache_.end())
+    {
+      cache_entry = micro_cache_entry->second;
+    }
+  }
+  if (cache_entry &&
+      rois.distanceCacheEntryInside(cache_entry))
   {
     double distance = handleDistanceInteriorCollisions(
-        micro_cache_entry->second,
+        cache_entry,
         pose);
-    if (micro_cache_entry->second.distance > micro_cache_threshold_)
+    if (cache_entry.distance > micro_cache_threshold_)
     {
       // Be sure to update the TLS last cache entry.
       // We do not need the write lock to update thread local storage.
-      tls_last_cache_entries_[query_region][query_obstacles] = micro_cache_entry->second;
+      tls_last_cache_entries_[query_region][query_obstacles] = cache_entry;
       if (track_statistics)
       {
         fast_micro_hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
@@ -939,7 +965,7 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
       {
         micro_hit = true;
         pose_distance = distance;
-        micro_cache_entry->second.setupResult(&result);
+        cache_entry.setupResult(&result);
       }
     }
   }
@@ -951,22 +977,30 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
   // cases.
   if (!milli_hit && !micro_hit)
   {
-    auto cache_entry = distance_cache_.find(cache_key);
-    if (cache_entry != distance_cache_.end() &&
-        rois.distanceCacheEntryInside(cache_entry->second))
+    cache_entry.clear();
+    {
+      shared_lock cache_read_lock(distance_cache_mutex_);
+      auto distance_cache_entry = distance_cache_.find(cache_key);
+      if (distance_cache_entry != distance_cache_.end())
+      {
+        cache_entry = distance_cache_entry->second;
+      }
+    }
+    if (cache_entry &&
+        rois.distanceCacheEntryInside(cache_entry))
     {
       // Cache hit, find the distance between the mesh triangle at the new pose
       // and the octomap box, and use this as our initial guess in the result.
       // This greatly prunes the search tree, yielding a big increase in runtime
       // performance.
       double distance = handleDistanceInteriorCollisions(
-          cache_entry->second,
+          cache_entry,
           pose);
       if (distance < pose_distance)
       {
         cache_hit = true;
         pose_distance = distance;
-        cache_entry->second.setupResult(&result);
+        cache_entry.setupResult(&result);
       }
     }
   }
@@ -988,21 +1022,6 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
       tls_last_cache_entries_[query_region][query_obstacles].setupResult(&result);
     }
   }
-
-  // We could keep the read-lock held during the relatively long distance query
-  // for two reasons:
-  // 1) the world has a raw pointer to the octomap, so it must not be freed
-  // 2) we do not want to be able to clear the cache during the distance
-  //    query and then add an invalid cache entry below
-  // However, it is not possible in practice for either of these things to
-  // happen, as it is already necessary to either have the associated costmap
-  // locked, or to have a copy (which by definition won't change). It allows
-  // for much more parallelism to keep the read lock dropped during the
-  // distance query.
-  read_lock.unlock();
-  // Release the mutex, when it is needed again below it will be passed back
-  // into a new lock.
-  read_lock.release();
 
   request.rel_err = opts.relative_error;
   request.enable_nearest_points = true;
@@ -1075,14 +1094,22 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     new_entry.distance = distance;
 
     // Update distance caches.
+    // While it may seem expensive to copy the cache entries into the
+    // caches, it prevents cache aliasing and avoids dynamic memory.
     {
-      // Get write access
-      unique_lock write_lock(upgrade_mutex_);
-      // While it may seem expensive to copy the cache entries into the
-      // caches, it prevents cache aliasing and avoids dynamic memory.
+      unique_lock cache_write_lock(distance_cache_mutex_);
       distance_cache_[cache_key] = new_entry;
-      micro_distance_cache_[micro_cache_key] = new_entry;
+    }
+    {
+      unique_lock cache_write_lock(milli_distance_cache_mutex_);
       milli_distance_cache_[milli_cache_key] = new_entry;
+    }
+    {
+      unique_lock cache_write_lock(micro_distance_cache_mutex_);
+      micro_distance_cache_[micro_cache_key] = new_entry;
+    }
+    {
+      unique_lock cache_write_lock(exact_distance_cache_mutex_);
       exact_distance_cache_[exact_cache_key] = new_entry;
     }
     tls_last_cache_entries_[query_region][query_obstacles] = new_entry;
