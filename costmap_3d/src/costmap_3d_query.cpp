@@ -406,10 +406,8 @@ void Costmap3DQuery::checkCostmap(Costmap3DQuery::upgrade_lock& upgrade_lock,
           "milli-distance cache removed " << start_size - milli_distance_cache_.size() << " entries");
     }
 
-    // Drop the micro cache. It is not worth iterating over the (relatively
-    // large) micro cache.  New entries in the costmap make the upper bound
-    // fairly worthless and we can not use the fast path which is the micro
-    // cache's strong point.
+    // Drop the micro cache as even if we removed invalid entries we can not
+    // use the fast path which is the micro cache's strong point.
     printDistanceCacheDebug(micro_distance_cache_, "micro-distance cache: ");
     micro_distance_cache_.clear();
     // We must drop the exact cache after the costmap has changed
