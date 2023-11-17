@@ -43,7 +43,7 @@
 #include <limits>
 #include <atomic>
 #include <cmath>
-#include <boost/thread/shared_mutex.hpp>
+#include <shared_mutex>
 #include <Eigen/Dense>
 #include <fcl/geometry/bvh/BVH_model.h>
 #include <fcl/geometry/shape/utility.h>
@@ -245,8 +245,7 @@ public:
 
   /** @brief Set the cache bin sizes.
    *
-   * Note: this does not invalidate any caches but does grab an exclusive lock
-   * on the internal upgrade mutex.
+   * Note: this does not invalidate any caches but does grab the instance lock.
    */
   void setCacheBinSize(
       unsigned int pose_bins_per_meter = 4,
@@ -286,7 +285,7 @@ public:
    *
    * Note: for a buffered query it is necessary to ensure that this method is
    * only called when there are no outstanding queries. Buffered queries are
-   * optimized to not hold the upgrade_mutex_ during the query, as the only
+   * optimized to not hold the instance_mutex_ during the query, as the only
    * time a buffered query can change is when either updateCostmap or
    * updateMeshResource is called. This is not true for an associated query, as
    * the costmap may change between queries with no update method being called.
@@ -310,17 +309,13 @@ public:
 protected:
   const LayeredCostmap3D* layered_costmap_3d_;
 
-  // Use boost's upgrade_mutex and not std::shared_mutex. The way
-  // std::shared_mutex is defined allows implementations to starve writers, and
-  // at least some implementations do allow readers to starve writers. The
-  // boost upgrade_mutex is guaranteed to not do so. When a thread tries to
-  // exclusive lock an boost::upgrade_mutex it blocks all new readers until
-  // after the writer drops the exclusive lock.
-  using upgrade_mutex = boost::upgrade_mutex;
-  using shared_lock = boost::shared_lock<upgrade_mutex>;
-  using upgrade_lock = boost::upgrade_lock<upgrade_mutex>;
-  using upgrade_to_unique_lock = boost::upgrade_to_unique_lock<upgrade_mutex>;
-  using unique_lock = boost::unique_lock<upgrade_mutex>;
+  // Use std::shared_timed_mutex to only require C++14 support.
+  // std::shared_mutex was not added until C++17. This class does not use the
+  // timed aspect, so if all users are on C++17 this can be converted to
+  // C++17's std::shared_mutex
+  using shared_mutex = std::shared_timed_mutex;
+  using shared_lock = std::shared_lock<shared_mutex>;
+  using unique_lock = std::unique_lock<shared_mutex>;
 
   /** @brief Ensure query map matches currently active costmap.
    * Note: must be called on every query to ensure that the correct Costmap3D is being queried.
@@ -330,11 +325,10 @@ protected:
    * during query calls when this is called.
    * If the associated layered_costmap_3d_ is empty the new_octree is used instead.
    */
-  virtual void checkCostmap(upgrade_lock& upgrade_lock,
-                            std::shared_ptr<const octomap::OcTree> new_octree = nullptr);
+  virtual void checkCostmap(std::shared_ptr<const octomap::OcTree> new_octree = nullptr);
 
   /** @brief See if checkCostmap may be needed.
-   * Note: must be called holding at least a shared lock on the upgrade_mutex_
+   * Note: must be called holding at least a shared lock on the instance_mutex_
    * Returns true if checkCostmap should be called. The whole point of this
    * method is to keep from having to obtain an upgrade lock unless the costmap
    * may actually have changed, which can be determined while holding a shared
@@ -356,7 +350,7 @@ protected:
    *
    * Note: for a buffered query it is necessary to ensure that this method is
    * only called when there are no outstanding queries. Buffered queries are
-   * optimized to not hold the upgrade_mutex_ during the query, as the only
+   * optimized to not hold the instance_mutex_ during the query, as the only
    * time a buffered query can change is when either updateCostmap or
    * updateMeshResource is called. This is not true for an associated query, as
    * the costmap may change between queries with no update method being called.
@@ -369,15 +363,18 @@ protected:
 
   /** @brief recalculate the distance cache thresholds.
    *
-   * The callermust already hold an exclusive lock on the upgrade_mutex_.
+   * The caller must already hold an exclusive lock on the instance_mutex_.
    */
   virtual void calculateCacheDistanceThresholds();
 
 private:
   // Common initialization between all constructors
   void init();
-  // synchronize this object for parallel queries
-  upgrade_mutex upgrade_mutex_;
+  // Protect instance state except for distance caches. This way buffered
+  // queries can skip using the instance_mutex_ as they are only ever updated
+  // when there are no queries outstanding. The only state then that must be
+  // synchronized are the distance caches.
+  shared_mutex instance_mutex_;
 
   // Save the PCL model of the mesh to use with crop hull
   pcl::PolygonMesh robot_mesh_;
@@ -782,7 +779,7 @@ private:
    * speed-up when distance queries are over the same space.
    */
   DistanceCache distance_cache_;
-  upgrade_mutex distance_cache_mutex_;
+  shared_mutex distance_cache_mutex_;
   /**
    * Whether the caller wants 2D mode for distance cache thresholds.
    * When in 2D mode, the cache thresholds can be tighter and are calculated
@@ -806,7 +803,7 @@ private:
    */
   double milli_cache_threshold_;
   DistanceCache milli_distance_cache_;
-  upgrade_mutex milli_distance_cache_mutex_;
+  shared_mutex milli_distance_cache_mutex_;
   /**
    * The micro-distance cache allows a very fast path when the nearest
    * obstacle is more than a threshold of distance away. This results in a
@@ -815,12 +812,12 @@ private:
    */
   double micro_cache_threshold_;
   DistanceCache micro_distance_cache_;
-  upgrade_mutex micro_distance_cache_mutex_;
+  shared_mutex micro_distance_cache_mutex_;
   // Immediately return the distance for an exact duplicate query
   // This avoid any calculation in the case that the calculation has been done
   // since the costmap was updated.
   ExactDistanceCache exact_distance_cache_;
-  upgrade_mutex exact_distance_cache_mutex_;
+  shared_mutex exact_distance_cache_mutex_;
   unsigned int last_layered_costmap_update_number_;
   //! Distance cache bins per meter for binning the pose's position
   unsigned int pose_bins_per_meter_;

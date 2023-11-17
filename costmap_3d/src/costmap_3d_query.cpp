@@ -139,7 +139,7 @@ void Costmap3DQuery::setCacheBinSize(
       unsigned int pose_micro_bins_per_meter,
       unsigned int pose_micro_bins_per_radian)
 {
-  upgrade_lock upgradeable_lock(upgrade_mutex_);
+  unique_lock instance_lock(instance_mutex_);
   if (pose_bins_per_meter != pose_bins_per_meter_ ||
       pose_bins_per_radian != pose_bins_per_radian_ ||
       pose_milli_bins_per_meter != pose_milli_bins_per_meter_ ||
@@ -147,7 +147,6 @@ void Costmap3DQuery::setCacheBinSize(
       pose_micro_bins_per_meter != pose_micro_bins_per_meter_ ||
       pose_micro_bins_per_radian != pose_micro_bins_per_radian_)
   {
-    upgrade_to_unique_lock write_lock(upgradeable_lock);
     // There is no need to invalidate the existing cache entries. If the bins
     // per meter change, either some or all of the new calls will miss the
     // existing cache entries. The existing entries are all still correct, so
@@ -173,11 +172,10 @@ void Costmap3DQuery::setCacheThresholdParameters(
     bool threshold_two_d_mode,
     double threshold_factor)
 {
-  upgrade_lock upgradeable_lock(upgrade_mutex_);
+  unique_lock instance_lock(instance_mutex_);
   if (threshold_two_d_mode != threshold_two_d_mode_ ||
       threshold_factor != threshold_factor_)
   {
-    upgrade_to_unique_lock write_lock(upgradeable_lock);
     threshold_two_d_mode_ = threshold_two_d_mode;
     threshold_factor_ = threshold_factor;
     ROS_INFO_STREAM("Set threshold 2D mode: " << threshold_two_d_mode_ ? "true" : "false");
@@ -233,8 +231,8 @@ void Costmap3DQuery::updateCostmap(const Costmap3DConstPtr& costmap_3d)
 {
   // Copy the given costmap
   std::shared_ptr<const octomap::OcTree> new_octree(new Costmap3D(*costmap_3d));
-  upgrade_lock upgrade_lock(upgrade_mutex_);
-  checkCostmap(upgrade_lock, new_octree);
+  unique_lock instance_lock(instance_mutex_);
+  checkCostmap(new_octree);
 }
 
 // Caller must hold at least a shared lock
@@ -288,10 +286,8 @@ static void printDistanceCacheDebug(
       " badness: " << unordered_map_badness(cache));
 }
 
-// Caller must already hold an upgradable shared lock via the passed
-// upgrade_lock, which we can use to upgrade to exclusive access if necessary.
-void Costmap3DQuery::checkCostmap(Costmap3DQuery::upgrade_lock& upgrade_lock,
-                                  std::shared_ptr<const octomap::OcTree> new_octree)
+// Caller must already hold the instance mutex
+void Costmap3DQuery::checkCostmap(std::shared_ptr<const octomap::OcTree> new_octree)
 {
   // Check if we need to update w/ just the upgrade lock held. This way only
   // one thread has to pay to upgrade to an exclusive lock (which forces no new
@@ -299,11 +295,6 @@ void Costmap3DQuery::checkCostmap(Costmap3DQuery::upgrade_lock& upgrade_lock,
   bool need_update = needCheckCostmap(new_octree);
   if (need_update)
   {
-    // get write access
-    upgrade_to_unique_lock write_lock(upgrade_lock);
-    // While it isn't possible for the cache locks to be held once the overall
-    // upgrade mutex is locked (since they are only ever grabbed while the
-    // shared read lock is held), go ahead and lock them too for completeness.
     unique_lock distance_cache_lock(distance_cache_mutex_);
     unique_lock milli_distance_cache_lock(milli_distance_cache_mutex_);
     unique_lock micro_distance_cache_lock(micro_distance_cache_mutex_);
@@ -582,7 +573,7 @@ void Costmap3DQuery::addPCLPolygonMeshToRobotModel(
 
 void Costmap3DQuery::updateMeshResource(const std::string& mesh_resource, double padding)
 {
-  unique_lock write_lock(upgrade_mutex_);
+  unique_lock write_lock(instance_mutex_);
   std::string filename = getFileNameFromPackageURL(mesh_resource);
   if (filename.size() == 0)
   {
@@ -816,16 +807,6 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     }
   }
 
-  shared_lock read_lock(upgrade_mutex_, boost::defer_lock);
-  bool associated_query = (layered_costmap_3d_ != nullptr);
-  // Only associated queries can change at any moment. Buffered queries only
-  // change when updateCostmap is called, which must be done while no queries
-  // are outstanding.
-  if (associated_query)
-  {
-    read_lock.lock();
-  }
-
   if (!robot_model_)
   {
     // We failed to create a robot model.
@@ -833,30 +814,30 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     return -1.0;
   }
 
-  // Check if an upgrade lock will be necessary. Do not do this with an upgrade
-  // lock held, as only one thread can have an upgrade lock at a time.
-  bool need_upgrade_lock = false;
-  if (associated_query && needCheckCostmap())
+  if (layered_costmap_3d_ != nullptr)
   {
-    need_upgrade_lock = true;
-  }
-
-  if (need_upgrade_lock)
-  {
-    // Drop the shared lock to get an upgrade lock. The only safe way to do
-    // this and avoid deadlock/livelock is to drop the shared lock and then get
-    // an upgrade lock. Because the lock is dropped, we must re-check the
-    // conditions after acquiring the upgrade mutex (as it may no longer be
-    // necessary). Because this very slow path is only encountered at most once
-    // or twice per update cycle (depending on if non-lethal queries are
-    // issued and if this is a buffered query) this is OK.
-    read_lock.unlock();
-    read_lock.release();
-    upgrade_lock upgradeable_lock(upgrade_mutex_);
-    checkCostmap(upgradeable_lock);
-    // Re-acquire the shared lock. This can be done atomically by downgrading
-    // the upgrade lock to a shared lock.
-    read_lock = shared_lock(std::move(upgradeable_lock));
+    // We only need to hold the instance mutex during checkCostmap. The costmap
+    // itself stays locked so the tree we are pointing to won't change. Only
+    // the internal state of the query object needs to be protected. Buffered
+    // queries can skip over this lock completely as the internal state only
+    // ever changes on calls to updateCostmap or updateMeshResource which must
+    // happen with no outstanding queries.
+    bool need_check_costmap = false;
+    {
+      // Improve concurrency by only holding a shared lock to check if we may
+      // need an exclusive lock.
+      shared_lock read_instance_lock(instance_mutex_);
+      need_check_costmap = needCheckCostmap();
+    }
+    if (need_check_costmap)
+    {
+      unique_lock write_instance_lock(instance_mutex_);
+      // Even after getting here we may not have to do anything in
+      // checkCostmap, as multiple shared locks could race on seeing if we may
+      // need to update. The checkCostmap() call handles this by re-checking
+      // needCheckCostmap().
+      checkCostmap();
+    }
   }
 
   std::shared_ptr<const octomap::OcTree> octree_to_query;
