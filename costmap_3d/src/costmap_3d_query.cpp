@@ -315,7 +315,6 @@ void Costmap3DQuery::checkCostmap(Costmap3DQuery::upgrade_lock& upgrade_lock,
       {
         // The octomap has been reallocated, change where we are pointing.
         octree_ptr_ = layered_costmap_3d_->getCostmap3D();
-        nonlethal_octree_ptr_.reset();
       }
     }
     else if (new_octree)
@@ -324,9 +323,9 @@ void Costmap3DQuery::checkCostmap(Costmap3DQuery::upgrade_lock& upgrade_lock,
       {
         // There is a new octomap allocated, change where we are pointing.
         octree_ptr_ = new_octree;
-        nonlethal_octree_ptr_.reset();
       }
     }
+    nonlethal_octree_ptr_ = std::static_pointer_cast<const Costmap3D>(octree_ptr_)->nonlethalOnly();
     checkInteriorCollisionLUT();
     // The costmap has been updated since the last query, reset our caches
 
@@ -817,7 +816,15 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     }
   }
 
-  shared_lock read_lock(upgrade_mutex_);
+  shared_lock read_lock(upgrade_mutex_, boost::defer_lock);
+  bool associated_query = (layered_costmap_3d_ != nullptr);
+  // Only associated queries can change at any moment. Buffered queries only
+  // change when updateCostmap is called, which must be done while no queries
+  // are outstanding.
+  if (associated_query)
+  {
+    read_lock.lock();
+  }
 
   if (!robot_model_)
   {
@@ -829,11 +836,7 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
   // Check if an upgrade lock will be necessary. Do not do this with an upgrade
   // lock held, as only one thread can have an upgrade lock at a time.
   bool need_upgrade_lock = false;
-  if (needCheckCostmap())
-  {
-    need_upgrade_lock = true;
-  }
-  if (query_obstacles == NONLETHAL_ONLY && !nonlethal_octree_ptr_)
+  if (associated_query && needCheckCostmap())
   {
     need_upgrade_lock = true;
   }
@@ -851,14 +854,6 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     read_lock.release();
     upgrade_lock upgradeable_lock(upgrade_mutex_);
     checkCostmap(upgradeable_lock);
-    if (query_obstacles == NONLETHAL_ONLY && !nonlethal_octree_ptr_)
-    {
-      // We do not yet have a nonlethal copy of the tree, create one now and save it until
-      // the next costmap update. In order to do this safely we must grab the write lock.
-      // This is OK, it will only happen once per update cycle.
-      upgrade_to_unique_lock write_lock(upgradeable_lock);
-      nonlethal_octree_ptr_ = std::static_pointer_cast<const Costmap3D>(octree_ptr_)->nonlethalOnly();
-    }
     // Re-acquire the shared lock. This can be done atomically by downgrading
     // the upgrade lock to a shared lock.
     read_lock = shared_lock(std::move(upgradeable_lock));

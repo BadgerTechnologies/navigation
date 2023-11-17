@@ -281,8 +281,15 @@ public:
 
   /** @brief change the costmap associated with this query.
    *
-   * This is useful for a buffered query to save the robot mesh LUT, which would be
-   * re-created if a new query is allocated.
+   * This is useful for a buffered query to save the robot mesh LUT, which
+   * would be re-created if a new query is allocated.
+   *
+   * Note: for a buffered query it is necessary to ensure that this method is
+   * only called when there are no outstanding queries. Buffered queries are
+   * optimized to not hold the upgrade_mutex_ during the query, as the only
+   * time a buffered query can change is when either updateCostmap or
+   * updateMeshResource is called. This is not true for an associated query, as
+   * the costmap may change between queries with no update method being called.
    */
   void updateCostmap(const Costmap3DConstPtr& costmap_3d);
 
@@ -345,7 +352,15 @@ protected:
    */
   virtual void checkTLS();
 
-  /** @brief Update the mesh to use for queries. */
+  /** @brief Update the mesh to use for queries.
+   *
+   * Note: for a buffered query it is necessary to ensure that this method is
+   * only called when there are no outstanding queries. Buffered queries are
+   * optimized to not hold the upgrade_mutex_ during the query, as the only
+   * time a buffered query can change is when either updateCostmap or
+   * updateMeshResource is called. This is not true for an associated query, as
+   * the costmap may change between queries with no update method being called.
+   */
   virtual void updateMeshResource(const std::string& mesh_resource, double padding = 0.0);
 
   /** @brief core of distance calculations */
