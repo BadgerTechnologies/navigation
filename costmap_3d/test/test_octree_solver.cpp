@@ -45,6 +45,202 @@
 
 static const std::string PACKAGE_URL("package://costmap_3d/");
 
+template <typename S>
+void generateRandomTransforms(S extents[6], fcl::aligned_vector<fcl::Transform3<S>>& transforms, std::size_t n);
+
+// Version of FCL's sphereBoxDistance that correctly calculates signed distance
+// when the sphere penetrates the box.
+template <typename S>
+double sphereBoxSignedDistance(
+    const fcl::Sphere<S>& sphere,
+    const fcl::Transform3<S>& X_FS,
+    const fcl::Box<S>& box,
+    const fcl::Transform3<S>& X_FB)
+{
+  // Find the sphere center C in the box's frame.
+  const fcl::Transform3<S> X_BS = X_FB.inverse() * X_FS;
+  const fcl::Vector3<S> p_BC = X_BS.translation();
+  const S r = sphere.radius;
+  const fcl::Vector3<S> box_half_sides = box.side / 2;
+
+  // Find N, the nearest point *inside* the box to the sphere center C (measured
+  // and expressed in frame B)
+  fcl::Vector3<S> p_BN;
+  bool N_is_not_C = fcl::detail::nearestPointInBox(box.side, p_BC, &p_BN);
+
+  if (N_is_not_C)
+  {
+    // If N is not C, we know the sphere center is *outside* the box (but we
+    // don't know yet if the they are completely separated).
+
+    // Compute the position vector from the nearest point N to the sphere center
+    // C in the frame B.
+    fcl::Vector3<S> p_NC_B = p_BC - p_BN;
+    return p_NC_B.norm() - r;
+  }
+
+  // Sphere center inside box. Find the shallowest of the possible penetration
+  // depths (the shallowest penetration is the maximum of a negative number)
+  // and subtract the sphere radius.
+  return std::max<S>({
+      p_BN(0) - box_half_sides(0),
+      -box_half_sides(0) - p_BN(0),
+      p_BN(1) - box_half_sides(1),
+      -box_half_sides(1) - p_BN(1),
+      p_BN(2) - box_half_sides(2),
+      -box_half_sides(2) - p_BN(2)}) - r;
+}
+
+// Simple non-optimized version of sphere-OBB signed distance used to check the
+// optimized version in the code.
+template <typename S>
+inline S sphereOBBSignedDistance(
+    S radius,
+    const fcl::Vector3<S>& sphere_center,
+    const fcl::OBB<S>& obb,
+    const fcl::Transform3<S>& obb_tf)
+{
+  fcl::Box<S> box;
+  fcl::Transform3<S> box_tf;
+  fcl::constructBox(obb, box, box_tf);
+  fcl::Transform3<S> sphere_tf(fcl::Transform3<S>::Identity());
+  sphere_tf.translation() = sphere_center;
+
+  return sphereBoxSignedDistance(
+    fcl::Sphere<S>(radius),
+    sphere_tf,
+    box,
+    obb_tf * box_tf);
+}
+
+// Eigen version, only for time comparison, as it does not calculate signed
+// distance but only exteriorDistance.
+template <typename S>
+inline S sphereOBBSignedDistanceEigen(
+    S radius,
+    const fcl::Vector3<S>& sphere_center,
+    const fcl::OBB<S>& obb,
+    const fcl::Transform3<S>& obb_tf)
+{
+  // Find the sphere center in the obb's frame.
+  const fcl::Vector3<S> sphere_center_in_obb = (obb_tf * sphere_center);
+  // Calculate distance using Eigen's AlignedBox::exteriorDistance
+  Eigen::AlignedBox<S, 3> eigen_aabb(-obb.extent, obb.extent);
+  return eigen_aabb.exteriorDistance(sphere_center_in_obb) - radius;
+}
+
+
+TEST(test_octree_solver, test_distance_octomap_rss)
+{
+  fcl::OBBRSS<double> obbrss;
+  fcl::AABB<double> aabb;
+  fcl::Vector3<double> aabb_center(0.0, 0.0, 0.0);
+  aabb.min_ = fcl::Vector3<double>(-1.0, -1.0, -1.0);
+  aabb.max_ = fcl::Vector3<double>(1.0, 1.0, 1.0);
+  double radius = aabb.radius();
+  fcl::Transform3<double> obbrss_tf(fcl::Transform3<double>::Identity());
+
+  obbrss.obb.To = fcl::Vector3<double>(0.0, 0.0, 0.0);
+  obbrss.obb.axis = fcl::Matrix3<double>::Identity();
+  obbrss.obb.extent(0) = 1.0;
+  obbrss.obb.extent(1) = 2.0;
+  obbrss.obb.extent(2) = 3.0;
+  double d_obb, d_obb2;
+  obbrss_tf.translation() = fcl::Vector3<double>(0.0, 0.0, 0.0);
+  d_obb = costmap_3d::distanceOctomapOBB(aabb.radius(), aabb_center, obbrss.obb, obbrss_tf);
+  EXPECT_NEAR(d_obb, -1.0 - std::sqrt(3.0), 1e-6);
+  d_obb2 = sphereOBBSignedDistance(radius, aabb_center, obbrss.obb, obbrss_tf);
+  EXPECT_NEAR(d_obb, d_obb2, 1e-9);
+  obbrss_tf.translation() = fcl::Vector3<double>(0.5, 0.0, 0.0);
+  d_obb = costmap_3d::distanceOctomapOBB(aabb.radius(), aabb_center, obbrss.obb, obbrss_tf);
+  EXPECT_NEAR(d_obb, -0.5 - std::sqrt(3.0), 1e-6);
+  d_obb2 = sphereOBBSignedDistance(radius, aabb_center, obbrss.obb, obbrss_tf);
+  EXPECT_NEAR(d_obb, d_obb2, 1e-9);
+  obbrss_tf.translation() = fcl::Vector3<double>(1.0, 0.0, 0.0);
+  d_obb = costmap_3d::distanceOctomapOBB(aabb.radius(), aabb_center, obbrss.obb, obbrss_tf);
+  EXPECT_NEAR(d_obb, -std::sqrt(3.0), 1e-6);
+  d_obb2 = sphereOBBSignedDistance(radius, aabb_center, obbrss.obb, obbrss_tf);
+  EXPECT_NEAR(d_obb, d_obb2, 1e-9);
+  obbrss_tf.translation() = fcl::Vector3<double>(3.0, 0.0, 0.0);
+  d_obb = costmap_3d::distanceOctomapOBB(aabb.radius(), aabb_center, obbrss.obb, obbrss_tf);
+  EXPECT_NEAR(d_obb, 2.0 - std::sqrt(3.0), 1e-6);
+  d_obb2 = sphereOBBSignedDistance(radius, aabb_center, obbrss.obb, obbrss_tf);
+  EXPECT_NEAR(d_obb, d_obb2, 1e-9);
+  obbrss_tf.translation() = fcl::Vector3<double>(0.0, -1.75, 0.25);
+  d_obb = costmap_3d::distanceOctomapOBB(aabb.radius(), aabb_center, obbrss.obb, obbrss_tf);
+  EXPECT_NEAR(d_obb, -.25 - std::sqrt(3.0), 1e-6);
+  d_obb2 = sphereOBBSignedDistance(radius, aabb_center, obbrss.obb, obbrss_tf);
+  EXPECT_NEAR(d_obb, d_obb2, 1e-9);
+  obbrss_tf.translation() = fcl::Vector3<double>(0.0, -1.75, 2.95);
+  d_obb = costmap_3d::distanceOctomapOBB(aabb.radius(), aabb_center, obbrss.obb, obbrss_tf);
+  EXPECT_NEAR(d_obb, -.05 - std::sqrt(3.0), 1e-6);
+  d_obb2 = sphereOBBSignedDistance(radius, aabb_center, obbrss.obb, obbrss_tf);
+  EXPECT_NEAR(d_obb, d_obb2, 1e-9);
+  obbrss_tf.translation() = fcl::Vector3<double>(3.0, -1.75, 0.25);
+  d_obb = costmap_3d::distanceOctomapOBB(aabb.radius(), aabb_center, obbrss.obb, obbrss_tf);
+  EXPECT_NEAR(d_obb, 2.0 - std::sqrt(3.0), 1e-6);
+  d_obb2 = sphereOBBSignedDistance(radius, aabb_center, obbrss.obb, obbrss_tf);
+  EXPECT_NEAR(d_obb, d_obb2, 1e-9);
+  obbrss_tf.translation() = fcl::Vector3<double>(3.0, -2.50, 0.25);
+  d_obb = costmap_3d::distanceOctomapOBB(aabb.radius(), aabb_center, obbrss.obb, obbrss_tf);
+  EXPECT_NEAR(d_obb, std::sqrt(2.0*2.0 + 0.5*0.5) - std::sqrt(3.0), 1e-6);
+  d_obb2 = sphereOBBSignedDistance(radius, aabb_center, obbrss.obb, obbrss_tf);
+  EXPECT_NEAR(d_obb, d_obb2, 1e-9);
+  obbrss_tf.translation() = fcl::Vector3<double>(3.0, -2.50, 3.25);
+  d_obb = costmap_3d::distanceOctomapOBB(aabb.radius(), aabb_center, obbrss.obb, obbrss_tf);
+  EXPECT_NEAR(d_obb, std::sqrt(2.0*2.0 + 0.5*0.5 + 0.25*0.25) - std::sqrt(3.0), 1e-6);
+  d_obb2 = sphereOBBSignedDistance(radius, aabb_center, obbrss.obb, obbrss_tf);
+  EXPECT_NEAR(d_obb, d_obb2, 1e-9);
+  size_t n = 100000;
+  std::chrono::high_resolution_clock::time_point start_time;
+  fcl::aligned_vector<fcl::Transform3<double>> transforms;
+  double extents[6] = {-10.0, -10.0, -10.0, 10.0, 10.0, 10.0};
+  generateRandomTransforms(extents, transforms, n);
+  for (unsigned i=0; i<n; ++i)
+  {
+    const fcl::Transform3<double>& obbrss_tf = transforms[i];
+    const fcl::OBB<double>& obb = obbrss.obb;
+    fcl::Transform3<double> obb_internal_tf;
+    obb_internal_tf.linear() = obb.axis;
+    obb_internal_tf.translation() = obb.To;
+    const fcl::Transform3<double> inverse_tf = (obbrss_tf * obb_internal_tf).inverse();
+    d_obb = costmap_3d::distanceOctomapOBB(radius, aabb_center, obbrss.obb, inverse_tf);
+    d_obb2 = sphereOBBSignedDistance(radius, aabb_center, obbrss.obb, obbrss_tf);
+    EXPECT_NEAR(d_obb, d_obb2, 1e-9);
+  }
+  double total_distance = 0;
+  start_time = std::chrono::high_resolution_clock::now();
+  for (unsigned i=0;i<n;++i)
+  {
+    const fcl::Transform3<double>& obbrss_tf = transforms[i];
+    total_distance += costmap_3d::distanceOctomapOBB(radius, aabb_center, obbrss.obb, obbrss_tf);
+  }
+  std::cout << "Branch-free implementation: " <<
+    std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count() <<
+    " total distance: " << total_distance << std::endl;
+  total_distance = 0;
+  start_time = std::chrono::high_resolution_clock::now();
+  for (unsigned i=0;i<n;++i)
+  {
+    const fcl::Transform3<double>& obbrss_tf = transforms[i];
+    total_distance += sphereOBBSignedDistance(radius, aabb_center, obbrss.obb, obbrss_tf);
+  }
+  std::cout << "FCL-based implementation: " <<
+    std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count() <<
+    " total distance: " << total_distance << std::endl;
+  // Time Eigen's implementation as a reference as well.
+  total_distance = 0;
+  start_time = std::chrono::high_resolution_clock::now();
+  for (unsigned i=0;i<n;++i)
+  {
+    const fcl::Transform3<double>& obbrss_tf = transforms[i];
+    total_distance += sphereOBBSignedDistanceEigen(radius, aabb_center, obbrss.obb, obbrss_tf);
+  }
+  std::cout << "Eigen-based implementation: " <<
+    std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count() <<
+    " total distance: " << total_distance << std::endl;
+}
+
 void octree_solver_test(std::size_t n, bool negative_x_roi = false, bool non_negative_x_roi = false, bool skip_check = false);
 
 TEST(test_octree_solver, test_against_fcl)
