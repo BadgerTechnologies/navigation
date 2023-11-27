@@ -177,6 +177,27 @@ private:
                                  int root2,
                                  const fcl::Transform3<S>& tf2,
                                  const std::vector<fcl::Halfspace<S>>* roi);
+
+  // Recurse the mesh on a specific OcTree cell
+  template <typename BV>
+  bool MeshDistanceRecurse(const fcl::OcTree<S>* tree1,
+                           const typename fcl::OcTree<S>::OcTreeNode* root1,
+                           const fcl::AABB<S>& bv1,
+                           S bv1_radius,
+                           const fcl::BVHModel<BV>* tree2,
+                           int root2,
+                           const fcl::Transform3<S>& tf2);
+
+  // Start mesh distance checks. This function checks the interior collision
+  // LUT prior to recursion.
+  template <typename BV>
+  bool MeshDistanceStart(const fcl::OcTree<S>* tree1,
+                         const typename fcl::OcTree<S>::OcTreeNode* root1,
+                         const fcl::AABB<S>& bv1,
+                         S bv1_radius,
+                         const fcl::BVHModel<BV>* tree2,
+                         int root2,
+                         const fcl::Transform3<S>& tf2);
 };
 
 template <typename NarrowPhaseSolver>
@@ -196,6 +217,14 @@ void OcTreeMeshSolver<NarrowPhaseSolver>::distance(
   mesh_tf_inverse_ = mesh_tf.inverse();
   rel_err_factor_ = 1.0 - drequest_->rel_err;
   interior_collision_ = false;
+
+  // Skip if the entire tree is not occupied, as the occupied check is carried
+  // out prior to descending the tree. This is done to skip having to check
+  // distances to unoccupied children nodes. Doing this check here prior to the
+  // first recursion is a small optimization to avoid having to double-check in
+  // each call.
+  if (!isNodeConsideredOccupied(tree1, tree1->getRoot()))
+    return;
 
   OcTreeMeshDistanceRecurse(tree1,
                             tree1->getRoot(),
@@ -391,6 +420,190 @@ inline int checkROI(const fcl::AABB<S>& bv1, const std::vector<fcl::Halfspace<S>
 
 template <typename NarrowPhaseSolver>
 template <typename BV>
+bool OcTreeMeshSolver<NarrowPhaseSolver>::MeshDistanceRecurse(
+    const fcl::OcTree<S>* tree1,
+    const typename fcl::OcTree<S>::OcTreeNode* root1,
+    const fcl::AABB<S>& bv1,
+    S bv1_radius,
+    const fcl::BVHModel<BV>* tree2,
+    int root2,
+    const fcl::Transform3<S>& tf2)
+{
+  if(tree2->getBV(root2).isLeaf())
+  {
+    fcl::Box<S> box;
+    fcl::Transform3<S> box_tf;
+    fcl::constructBox(bv1, fcl::Transform3<S>::Identity(), box, box_tf);
+
+    int primitive_id = tree2->getBV(root2).primitiveId();
+    const fcl::Triangle& tri_id = tree2->tri_indices[primitive_id];
+    const fcl::Vector3<S>& p1 = tree2->vertices[tri_id[0]];
+    const fcl::Vector3<S>& p2 = tree2->vertices[tri_id[1]];
+    const fcl::Vector3<S>& p3 = tree2->vertices[tri_id[2]];
+
+    S dist;
+    fcl::Vector3<S> closest_p1, closest_p2;
+    solver_->shapeTriangleDistance(box, box_tf, p1, p2, p3, tf2, &dist, &closest_p1, &closest_p2);
+    dresult_->primative_distance_calculations++;
+
+    if (dist < 0.0 && drequest_->enable_signed_distance && signed_distance_function_)
+    {
+      dist = signed_distance_function_(
+          box,
+          box_tf,
+          primitive_id,
+          tf2);
+    }
+
+    if (dist < dresult_->min_distance)
+    {
+      // only allocate dynamic memory in the case where a new min was found
+      std::shared_ptr<fcl::Box<S>> box_ptr(new fcl::Box<S>(box));
+      std::shared_ptr<fcl::TriangleP<S>> triangle(new fcl::TriangleP<S>(p1, p2, p3));
+      dresult_->update(dist, tree1, tree2, root1 - tree1->getRoot(), primitive_id,
+                      closest_p1, closest_p2, box_ptr, box_tf, triangle, tf2);
+    }
+
+    return exact_signed_distance_ ? false : drequest_->isSatisfied(*dresult_);
+  }
+  else
+  {
+    const fcl::Vector3<S> bv1_center(bv1.center());
+    int children[2] = {
+      tree2->getBV(root2).leftChild(),
+      tree2->getBV(root2).rightChild()};
+    const BV* bv2[2] = {
+      &tree2->getBV(children[0]).bv,
+      &tree2->getBV(children[1]).bv};
+    S d[2] = {
+      distanceOctomapOBBRSS(bv1_radius, bv1_center, *bv2[0], tf2),
+      distanceOctomapOBBRSS(bv1_radius, bv1_center, *bv2[1], tf2)};
+    dresult_->bv_distance_calculations+=2;
+    // Go left first if it is closer, otherwise go right first
+    if (d[0] < d[1])
+    {
+      for (int i=0; i<2; ++i)
+      {
+        if(d[i] < rel_err_factor_ * dresult_->min_distance)
+        {
+          if(MeshDistanceRecurse(tree1, root1, bv1, bv1_radius, tree2, children[i], tf2))
+            return true;
+        }
+      }
+    }
+    else
+    {
+      for (int i=1; i>-1; --i)
+      {
+        if(d[i] < rel_err_factor_ * dresult_->min_distance)
+        {
+          if(MeshDistanceRecurse(tree1, root1, bv1, bv1_radius, tree2, children[i], tf2))
+            return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+template <typename NarrowPhaseSolver>
+template <typename BV>
+bool OcTreeMeshSolver<NarrowPhaseSolver>::MeshDistanceStart(
+    const fcl::OcTree<S>* tree1,
+    const typename fcl::OcTree<S>::OcTreeNode* root1,
+    const fcl::AABB<S>& bv1,
+    S bv1_radius,
+    const fcl::BVHModel<BV>* tree2,
+    int root2,
+    const fcl::Transform3<S>& tf2)
+{
+  // There is no way (that I can think of) to correctly direct the search to
+  // avoid having to test each box that touches the bounding volume of the
+  // whole mesh. So, to make it take a reasonable amount of time to check each
+  // box that is tangential to the bounding volume of the mesh (because its
+  // min_distance lower bound would be zero), create a LUT to use that takes
+  // as input the centroid of the octomap box, rounded to a grid, and looks up
+  // the mesh triangle that is closest to a box modeling that grid cell. This
+  // will give close enough results to work well for costmap queries in a
+  // reasonable amount of time. After looking up the mesh (instead of having
+  // to search for it through the BVH), the mesh triangle is modeled as a
+  // halfspace (all halfspace models can also be created at construction time)
+  // and the box to halfspace distance can be calculated (this is a fast
+  // calculation compared to a GJK run). This distance will then be used as
+  // the penetration distance.
+  //
+  // The bound distance will never be negative, clip all negatives to zero, as
+  // the overlap of bounding volumes does not give an accurate penetration
+  // depth. This forces the search to try all boxes within the mesh.
+  //
+  // The LUT and halfspaces will be pre-calculated and passed to the solver.
+  // If the solver does not have them, it will proceed normally. This way,
+  // the solver can be used to create the LUT by finding the distance
+  // between an octomap with only one cell occupied to identify the closest
+  // mesh triangle to that spot. It is outside the scope of this class how
+  // to determine if the octomap box is inside the mesh, but a method like
+  // PCL's crop hull could be used on the centroid of the mesh. This LUT
+  // mechanism does introduce some inaccuracies when the rounded centroid
+  // appears in the mesh, but is actually outside the mesh. For this reason,
+  // the LUT resolution should be more than double the octomap resolution.
+  // This can easily be achieved by using the transform argument to the
+  // distance function. Create an octomap with a single cell at the octomap
+  // index corresponding to the cell near the origin. Then provide different
+  // arguments for the transform to find the nearest mesh polygon for each
+  // entry.
+  //
+  // The LUT could also be made more accurate by taking not only position but
+  // orientation as an input. This can be abstracted at the LUT level by
+  // passing the transform to put the box into the mesh frame (this
+  // transform can be pre-calculated once for the whole distance operation).
+  // Then the LUT can decide how to find the appropriate entry.
+  if (interior_collision_function_)
+  {
+    // There is an interior collision function and we are at the root of the BVH.
+    fcl::Box<S> box;
+    fcl::Transform3<S> box_tf;
+    fcl::constructBox(bv1, fcl::Transform3<S>::Identity(), box, box_tf);
+    int primitive_id;
+    S collision_distance = interior_collision_function_(
+        box,
+        box_tf,
+        tf2,
+        mesh_tf_inverse_,
+        &primitive_id);
+    if (collision_distance < 0.0)
+    {
+      // A known interior collision.
+      interior_collision_ = true;
+      const fcl::Triangle& tri_id = tree2->tri_indices[primitive_id];
+      const fcl::Vector3<S>& p1 = tree2->vertices[tri_id[0]];
+      const fcl::Vector3<S>& p2 = tree2->vertices[tri_id[1]];
+      const fcl::Vector3<S>& p3 = tree2->vertices[tri_id[2]];
+      std::shared_ptr<fcl::Box<S>> box_ptr(new fcl::Box<S>(box));
+      std::shared_ptr<fcl::TriangleP<S>> triangle(new fcl::TriangleP<S>(p1, p2, p3));
+      // Closest point doesn't make much sense on an interior collision of two volumes.
+      // Just return the center point of the box.
+      dresult_->update(collision_distance, tree1, tree2, root1 - tree1->getRoot(), primitive_id,
+                       box_tf.translation(), box_tf.translation(),
+                       box_ptr, box_tf, triangle, tf2);
+      // For exact signed distance, keep going and checking other colliding cells
+      return !exact_signed_distance_;
+    }
+    // If the current result is interior to the mesh, there is no need to
+    // descend into the mesh, as any result will be less-penetrating.
+    // This check is only helpful when exact signed distance is enabled, as
+    // otherwise we would have already stopped once finding the first
+    // collision.
+    else if (interior_collision_)
+    {
+      return false;
+    }
+  }
+  return MeshDistanceRecurse(tree1, root1, bv1, bv1_radius, tree2, root2, tf2);
+}
+
+template <typename NarrowPhaseSolver>
+template <typename BV>
 bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
     const fcl::OcTree<S>* tree1,
     const typename fcl::OcTree<S>::OcTreeNode* root1,
@@ -418,51 +631,6 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
       roi = nullptr;
     }
   }
-
-  if(!tree1->nodeHasChildren(root1) && tree2->getBV(root2).isLeaf())
-  {
-    if(isNodeConsideredOccupied(tree1, root1))
-    {
-      fcl::Box<S> box;
-      fcl::Transform3<S> box_tf;
-      fcl::constructBox(bv1, fcl::Transform3<S>::Identity(), box, box_tf);
-
-      int primitive_id = tree2->getBV(root2).primitiveId();
-      const fcl::Triangle& tri_id = tree2->tri_indices[primitive_id];
-      const fcl::Vector3<S>& p1 = tree2->vertices[tri_id[0]];
-      const fcl::Vector3<S>& p2 = tree2->vertices[tri_id[1]];
-      const fcl::Vector3<S>& p3 = tree2->vertices[tri_id[2]];
-
-      S dist;
-      fcl::Vector3<S> closest_p1, closest_p2;
-      solver_->shapeTriangleDistance(box, box_tf, p1, p2, p3, tf2, &dist, &closest_p1, &closest_p2);
-      dresult_->primative_distance_calculations++;
-
-      if (dist < 0.0 && drequest_->enable_signed_distance && signed_distance_function_)
-      {
-        dist = signed_distance_function_(
-            box,
-            box_tf,
-            primitive_id,
-            tf2);
-      }
-
-      if (dist < dresult_->min_distance)
-      {
-        // only allocate dynamic memory in the case where a new min was found
-        std::shared_ptr<fcl::Box<S>> box_ptr(new fcl::Box<S>(box));
-        std::shared_ptr<fcl::TriangleP<S>> triangle(new fcl::TriangleP<S>(p1, p2, p3));
-        dresult_->update(dist, tree1, tree2, root1 - tree1->getRoot(), primitive_id,
-                        closest_p1, closest_p2, box_ptr, box_tf, triangle, tf2);
-      }
-
-      return exact_signed_distance_ ? false : drequest_->isSatisfied(*dresult_);
-    }
-    else
-      return false;
-  }
-
-  if(!isNodeConsideredOccupied(tree1, root1)) return false;
 
   if(tree1->nodeHasChildren(root1))
   {
@@ -533,128 +701,14 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
   }
   else
   {
-    const fcl::Vector3<S> bv1_center(bv1.center());
-
-    // There is no way (that I can think of) to correctly direct the search to
-    // avoid having to test each box that touches the bounding volume of the
-    // whole mesh. So, to make it take a reasonable amount of time to check each
-    // box that is tangential to the bounding volume of the mesh (because its
-    // min_distance lower bound would be zero), create a LUT to use that takes
-    // as input the centroid of the octomap box, rounded to a grid, and looks up
-    // the mesh triangle that is closest to a box modeling that grid cell. This
-    // will give close enough results to work well for costmap queries in a
-    // reasonable amount of time. After looking up the mesh (instead of having
-    // to search for it through the BVH), the mesh triangle is modeled as a
-    // halfspace (all halfspace models can also be created at construction time)
-    // and the box to halfspace distance can be calculated (this is a fast
-    // calculation compared to a GJK run). This distance will then be used as
-    // the penetration distance.
-    //
-    // The bound distance will never be negative, clip all negatives to zero, as
-    // the overlap of bounding volumes does not give an accurate penetration
-    // depth. This forces the search to try all boxes within the mesh.
-    //
-    // The LUT and halfspaces will be pre-calculated and passed to the solver.
-    // If the solver does not have them, it will proceed normally. This way,
-    // the solver can be used to create the LUT by finding the distance
-    // between an octomap with only one cell occupied to identify the closest
-    // mesh triangle to that spot. It is outside the scope of this class how
-    // to determine if the octomap box is inside the mesh, but a method like
-    // PCL's crop hull could be used on the centroid of the mesh. This LUT
-    // mechanism does introduce some inaccuracies when the rounded centroid
-    // appears in the mesh, but is actually outside the mesh. For this reason,
-    // the LUT resolution should be more than double the octomap resolution.
-    // This can easily be achieved by using the transform argument to the
-    // distance function. Create an octomap with a single cell at the octomap
-    // index corresponding to the cell near the origin. Then provide different
-    // arguments for the transform to find the nearest mesh polygon for each
-    // entry.
-    //
-    // The LUT could also be made more accurate by taking not only position but
-    // orientation as an input. This can be abstracted at the LUT level by
-    // passing the transform to put the box into the mesh frame (this
-    // transform can be pre-calculated once for the whole distance operation).
-    // Then the LUT can decide how to find the appropriate entry.
-    if (interior_collision_function_ && root2 == 0)
-    {
-      // There is an interior collision function and we are at the root of the BVH.
-      fcl::Box<S> box;
-      fcl::Transform3<S> box_tf;
-      fcl::constructBox(bv1, fcl::Transform3<S>::Identity(), box, box_tf);
-      int primitive_id;
-      S collision_distance = interior_collision_function_(
-          box,
-          box_tf,
-          tf2,
-          mesh_tf_inverse_,
-          &primitive_id);
-      if (collision_distance < 0.0)
-      {
-        // A known interior collision.
-        interior_collision_ = true;
-        const fcl::Triangle& tri_id = tree2->tri_indices[primitive_id];
-        const fcl::Vector3<S>& p1 = tree2->vertices[tri_id[0]];
-        const fcl::Vector3<S>& p2 = tree2->vertices[tri_id[1]];
-        const fcl::Vector3<S>& p3 = tree2->vertices[tri_id[2]];
-        std::shared_ptr<fcl::Box<S>> box_ptr(new fcl::Box<S>(box));
-        std::shared_ptr<fcl::TriangleP<S>> triangle(new fcl::TriangleP<S>(p1, p2, p3));
-        // Closest point doesn't make much sense on an interior collision of two volumes.
-        // Just return the center point of the box.
-        dresult_->update(collision_distance, tree1, tree2, root1 - tree1->getRoot(), primitive_id,
-                         box_tf.translation(), box_tf.translation(),
-                         box_ptr, box_tf, triangle, tf2);
-        // For exact signed distance, keep going and checking other colliding cells
-        return !exact_signed_distance_;
-      }
-      // If the current result is interior to the mesh, there is no need to
-      // decend into the mesh, as any result will be less-penetrating.
-      // This check is only helpful when exact signed distance is enabled, as
-      // otherwise we would have already stopped once finding the first
-      // collision.
-      else if (interior_collision_)
-      {
-        return false;
-      }
-    }
-    int children[2] = {
-      tree2->getBV(root2).leftChild(),
-      tree2->getBV(root2).rightChild()};
-    const BV* bv2[2] = {
-      &tree2->getBV(children[0]).bv,
-      &tree2->getBV(children[1]).bv};
-    S d[2] = {
-      distanceOctomapOBBRSS(bv1_radius, bv1_center, *bv2[0], tf2),
-      distanceOctomapOBBRSS(bv1_radius, bv1_center, *bv2[1], tf2)};
-    dresult_->bv_distance_calculations+=2;
-    // Go left first if it is closer, otherwise go right first
-    if (d[0] < d[1])
-    {
-      for (int i=0; i<2; ++i)
-      {
-        if(d[i] < rel_err_factor_ * dresult_->min_distance)
-        {
-          // Because we descend the octree first, there is no need to check the
-          // ROI when descending the mesh.
-          if(OcTreeMeshDistanceRecurse(tree1, root1, bv1, bv1_radius, tree2, children[i], tf2, nullptr))
-            return true;
-        }
-      }
-    }
-    else
-    {
-      for (int i=1; i>-1; --i)
-      {
-        if(d[i] < rel_err_factor_ * dresult_->min_distance)
-        {
-          // Because we descend the octree first, there is no need to check the
-          // ROI when descending the mesh.
-          if(OcTreeMeshDistanceRecurse(tree1, root1, bv1, bv1_radius, tree2, children[i], tf2, nullptr))
-            return true;
-        }
-      }
-    }
+    // Because we descend the octree first, there is no need to check the
+    // ROI when descending the mesh.
+    return MeshDistanceStart(tree1, root1, bv1, bv1_radius, tree2, root2, tf2);
   }
 
+  // This happens if the search under this region of the octree failed to find
+  // the known closest distance within the error factors. The search will
+  // continue...
   return false;
 }
 
