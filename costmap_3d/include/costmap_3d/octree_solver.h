@@ -664,7 +664,7 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
       {
         if(distances[i] == min_distance)
         {
-          if(distances[i] < rel_err_factor_ * dresult_->min_distance || exact_signed_distance_ && min_distance <= 0)
+          if(min_distance < rel_err_factor_ * dresult_->min_distance || exact_signed_distance_ && min_distance <= 0)
           {
             // Possible a better result is below, descend
             if(OcTreeMeshDistanceRecurse(tree1, children[i], child_bvs[i], radius, tree2, root2, tf2, roi))
