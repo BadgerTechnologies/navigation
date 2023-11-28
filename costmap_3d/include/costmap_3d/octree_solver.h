@@ -480,26 +480,17 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::MeshDistanceRecurse(
       distanceOctomapOBBRSS(bv1_radius, bv1_center, *bv2[1], tf2)};
     dresult_->bv_distance_calculations+=2;
     // Go left first if it is closer, otherwise go right first
-    if (d[0] < d[1])
+    bool go_left = (d[0] < d[1]);
+    unsigned int start = go_left ? 0 : 1;
+    int step = go_left ? 1 : -1;
+    // The negative step will take us to max unsigned which will terminate the
+    // loop too.
+    for (unsigned int i=start; i<2; i+=step)
     {
-      for (int i=0; i<2; ++i)
+      if(d[i] < rel_err_factor_ * dresult_->min_distance)
       {
-        if(d[i] < rel_err_factor_ * dresult_->min_distance)
-        {
-          if(MeshDistanceRecurse(tree1, root1, bv1, bv1_radius, tree2, children[i], tf2))
-            return true;
-        }
-      }
-    }
-    else
-    {
-      for (int i=1; i>-1; --i)
-      {
-        if(d[i] < rel_err_factor_ * dresult_->min_distance)
-        {
-          if(MeshDistanceRecurse(tree1, root1, bv1, bv1_radius, tree2, children[i], tf2))
-            return true;
-        }
+        if(MeshDistanceRecurse(tree1, root1, bv1, bv1_radius, tree2, children[i], tf2))
+          return true;
       }
     }
   }
