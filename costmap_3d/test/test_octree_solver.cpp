@@ -36,6 +36,9 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <random>
+
 #include <fcl/config.h>
 #include <fcl/geometry/octree/octree.h>
 #include <fcl/broadphase/broadphase_dynamic_AABB_tree.h>
@@ -456,6 +459,158 @@ void octree_solver_test(std::size_t n, bool negative_x_roi, bool non_negative_x_
     }
   }
   std::cout << "Average time per octree solve: " << std::chrono::duration_cast<std::chrono::nanoseconds>(total_time).count() / n << "ns" << std::endl;
+}
+
+// Test the custom ArgSortUpTo8 function used by the octree_solver to very
+// quickly sort up to 8 distances, returning the sorted indices.
+TEST(test_octree_solver, test_arg_sort_up_to_8)
+{
+  constexpr unsigned incremental[8] = {0, 1, 2, 3, 4, 5, 6, 7};
+  std::chrono::high_resolution_clock::time_point start_time;
+  for (unsigned n=0; n <= 8; ++n)
+  {
+    std::chrono::high_resolution_clock::duration arg_sort_time(0), std_sort_time(0);
+    unsigned indices[8];
+    unsigned iterations = 0;
+    // To get accurate timing information for small n, always do at least 1000
+    // iterations.
+    while (iterations < 1000)
+    {
+      // Test every permutation, which is doable for up to 8 (8! is 40320).
+      // Note that this is really overkill to prove the sorting networks are
+      // correct, as the check below with the powers of 2 is all that is
+      // necessary to prove the correctness of a sorting network. But
+      // exercising every permutation is a good overall performance check
+      // and is doable for the size lists that are being sorted.
+      double permutation[8] = {0, 1, 2, 3, 4, 5, 6, 7};
+      do
+      {
+        start_time = std::chrono::high_resolution_clock::now();
+        costmap_3d::ArgSortUpTo8(n, indices, permutation);
+        arg_sort_time += std::chrono::high_resolution_clock::now() - start_time;
+        for (unsigned i=0; i < n; ++i)
+        {
+          EXPECT_EQ(i, permutation[indices[i]]);
+        }
+        std::copy(incremental, incremental + n, indices);
+        start_time = std::chrono::high_resolution_clock::now();
+        std::sort(indices, indices + n, [permutation](int a, int b){return permutation[a] < permutation[b];});
+        std_sort_time += std::chrono::high_resolution_clock::now() - start_time;
+        for (unsigned i=0; i < n; ++i)
+        {
+          EXPECT_EQ(i, permutation[indices[i]]);
+        }
+        iterations++;
+      }
+      while (std::next_permutation(permutation, permutation + n));
+      if (n > 1)
+      {
+        // Now test sorting 0/1 sequences of every combination to ensure
+        // sorting works properly with equal entries. Use a bitset to count the
+        // number of set bits in a fairly standard way (popcount isn't added
+        // until C++20).
+        std::bitset<8> bits;
+        for (unsigned p=0; p < (1<<n); ++p)
+        {
+          bits.reset();
+          for (unsigned bit=0; bit<n; ++bit)
+          {
+            if (((1<<bit) & p) == 0)
+            {
+              permutation[bit] = 0;
+            }
+            else
+            {
+              permutation[bit] = 1;
+              bits.set(bit);
+            }
+          }
+          size_t set_count = bits.count();
+          start_time = std::chrono::high_resolution_clock::now();
+          costmap_3d::ArgSortUpTo8(n, indices, permutation);
+          arg_sort_time += std::chrono::high_resolution_clock::now() - start_time;
+          for (unsigned i = 0; i < n - set_count; ++i)
+          {
+            EXPECT_EQ(0, permutation[indices[i]]);
+          }
+          for (unsigned i = n - set_count; i < n; ++i)
+          {
+            EXPECT_EQ(1, permutation[indices[i]]);
+          }
+          std::copy(incremental, incremental + n, indices);
+          start_time = std::chrono::high_resolution_clock::now();
+          std::sort(indices, indices + n, [permutation](int a, int b){return permutation[a] < permutation[b];});
+          std_sort_time += std::chrono::high_resolution_clock::now() - start_time;
+          for (unsigned i = 0; i < n - set_count; ++i)
+          {
+            EXPECT_EQ(0, permutation[indices[i]]);
+          }
+          for (unsigned i = n - set_count; i < n; ++i)
+          {
+            EXPECT_EQ(1, permutation[indices[i]]);
+          }
+          iterations++;
+        }
+      }
+    }
+    std::cout << "Average time to std::sort " << n << ": " <<
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std_sort_time).count() / iterations <<
+        "ns (iterations: " << iterations << ")" << std::endl;
+    std::cout << "Average time to ArgSortUpTo8 " << n << ": " <<
+        std::chrono::duration_cast<std::chrono::nanoseconds>(arg_sort_time).count() / iterations <<
+        "ns (iterations: " << iterations << ")" << std::endl;
+  }
+  constexpr size_t n = 100000;
+  std::array<std::array<double, 8>, n> darrs;
+  std::array<unsigned, n> ns;
+  std::mt19937 gen(1);
+  std::uniform_int_distribution<> n_distr(2, 8);
+  std::uniform_real_distribution<> d_distr(-1e6, 1e6);
+
+  for (unsigned a=0; a<n; ++a)
+  {
+    ns[a] = n_distr(gen);
+    for (unsigned i=0; i<ns[a]; ++i)
+    {
+      darrs[a][i] = d_distr(gen);
+    }
+  }
+  // Check to make sure that ArgSortUpTo8 actually sorts these random numbers
+  // within the acceptable tolerance (as the internal packing step does
+  // introduce some absolute error at the nano-meter scale)
+  for (unsigned a=0; a<n; ++a)
+  {
+    unsigned indices[8];
+    costmap_3d::ArgSortUpTo8(ns[a], indices, darrs[a].data());
+    for (unsigned i=0; i<ns[a]-1; ++i)
+    {
+      EXPECT_LT(darrs[a][indices[i]], darrs[a][indices[i+1]] + 1e-7);
+    }
+  }
+  // Now time the same sorts, and compare to std::sort on the same data.
+  start_time = std::chrono::high_resolution_clock::now();
+  for (unsigned a=0; a<n; ++a)
+  {
+    unsigned indices[8];
+    costmap_3d::ArgSortUpTo8(ns[a], indices, darrs[a].data());
+  }
+  std::chrono::high_resolution_clock::duration arg_sort_time;
+  arg_sort_time = std::chrono::high_resolution_clock::now() - start_time;
+  std::cout << "Total time to ArgSortUpTo8 " << n << " random arrays of size 2-8: " <<
+      std::chrono::duration_cast<std::chrono::nanoseconds>(arg_sort_time).count() <<
+      "ns" << std::endl;
+  start_time = std::chrono::high_resolution_clock::now();
+  for (unsigned a=0; a<n; ++a)
+  {
+    unsigned indices[8];
+    const double* distances = darrs[a].data();
+    std::sort(indices, indices + ns[a], [distances](int a, int b){return distances[a] < distances[b];});
+  }
+  std::chrono::high_resolution_clock::duration std_sort_time;
+  std_sort_time = std::chrono::high_resolution_clock::now() - start_time;
+  std::cout << "Total time to std::sort the same " << n << " random arrays of size 2-8: " <<
+      std::chrono::duration_cast<std::chrono::nanoseconds>(std_sort_time).count() <<
+      "ns" << std::endl;
 }
 
 int main(int argc, char* argv[])

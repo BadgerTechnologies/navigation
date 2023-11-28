@@ -593,6 +593,267 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::MeshDistanceStart(
   return MeshDistanceRecurse(tree1, root1, bv1, bv1_radius, tree2, root2, tf2);
 }
 
+template <typename S>
+static inline void SwapIfGreater(S* a, S* b)
+{
+  // Instead of using an if followed by std::swap, use ternary operations and a
+  // temporary to get branchless swapping on architectures which support it
+  // (such as cmov on x86).
+  const bool swap = *a > *b;
+  const S t = swap ? *a : *b;
+  *a = swap ? *b : *a;
+  *b = t;
+}
+
+template <typename S>
+static inline uint64_t PackDistanceIndexUpTo8(const S distance, const unsigned index)
+{
+  // Pack a positive-offset version of the distance with the index for quick
+  // compare and swap. Without packing, the compiler will use slower branches
+  // for the swap-if-greater in the sort routine. With packing, it will be able
+  // to use conditional moves, which are much cheaper as they do not cause
+  // branches. Because Costmap3D distances can never be more than 2 to the
+  // octomap depth times the octomap resolution, simply add a number larger
+  // than the largest possible distance (1e6) to the distances to bias them
+  // positive. This way the numbers can be directly bitwise compared without
+  // explicit casting (and rounding) back to int. There is also plenty of
+  // precision in a double floating point number to give up the bottom 3 bits
+  // for the index. The worst possible precision of the packed distance then is
+  // 1 / (2^(52-3) / 1e6) which is ~2nm, more than enough for a geometry
+  // calculation, especially considering that GJK will internally use 1e-6 for
+  // its tolerance.
+  union {double d; uint64_t uint;} u = {distance + 1e6};
+  return u.uint & ~0x07 | index;
+}
+
+static inline unsigned UnpackDistanceIndexUpTo8(const uint64_t di)
+{
+  return di & 0x07;
+}
+
+template <typename I, typename S>
+static inline void ArgSortUpTo8(unsigned n, I* indices, const S* distances)
+{
+  // Sorting is dominated by the cost of comparing and branching, so using the
+  // fewest possible comparisons yields optimal results. Therefore use the
+  // well-known optimal sorting networks for 2-8 items taken from /The Art of
+  // Programming/ by Knuth. Organize them so that (if possible) the
+  // compiler/architecture can run comparisons and swaps in parallel (even if
+  // the compiler is unable to do this via instruction-level parallelism, the
+  // architecture itself may depending on its pipeline depth, for instance
+  // while swapping one entry it could go ahead and execute the comparison for
+  // the next when there is no data dependency on the swap).
+  switch (n)
+  {
+    case 8:
+      {
+        // The compiler does a much better job ordering operations when using
+        // individual local variables than with one local array of fixed size.
+        // Presumably this is because it is easier to track data dependencies
+        // on individual variables than an array. This does make the compiler
+        // not vectorize the distance/index packing, but in practice the
+        // speed-up in more efficient comparison ordering and interleaving is a
+        // significant net gain and worth this limitation.
+        uint64_t di0 = PackDistanceIndexUpTo8(distances[0], 0);
+        uint64_t di1 = PackDistanceIndexUpTo8(distances[1], 1);
+        uint64_t di2 = PackDistanceIndexUpTo8(distances[2], 2);
+        uint64_t di3 = PackDistanceIndexUpTo8(distances[3], 3);
+        uint64_t di4 = PackDistanceIndexUpTo8(distances[4], 4);
+        uint64_t di5 = PackDistanceIndexUpTo8(distances[5], 5);
+        uint64_t di6 = PackDistanceIndexUpTo8(distances[6], 6);
+        uint64_t di7 = PackDistanceIndexUpTo8(distances[7], 7);
+        // Depth 1
+        SwapIfGreater(&di0, &di1);
+        SwapIfGreater(&di2, &di3);
+        SwapIfGreater(&di4, &di5);
+        SwapIfGreater(&di6, &di7);
+        // Depth 2
+        SwapIfGreater(&di0, &di2);
+        SwapIfGreater(&di1, &di3);
+        SwapIfGreater(&di4, &di6);
+        SwapIfGreater(&di5, &di7);
+        // Depth 3
+        SwapIfGreater(&di0, &di4);
+        SwapIfGreater(&di1, &di5);
+        SwapIfGreater(&di2, &di6);
+        SwapIfGreater(&di3, &di7);
+        // Depth 4
+        SwapIfGreater(&di2, &di4);
+        SwapIfGreater(&di3, &di5);
+        // Depth 5
+        SwapIfGreater(&di1, &di4);
+        SwapIfGreater(&di3, &di6);
+        // Depth 6
+        SwapIfGreater(&di1, &di2);
+        SwapIfGreater(&di3, &di4);
+        SwapIfGreater(&di5, &di6);
+        indices[0] = UnpackDistanceIndexUpTo8(di0);
+        indices[1] = UnpackDistanceIndexUpTo8(di1);
+        indices[2] = UnpackDistanceIndexUpTo8(di2);
+        indices[3] = UnpackDistanceIndexUpTo8(di3);
+        indices[4] = UnpackDistanceIndexUpTo8(di4);
+        indices[5] = UnpackDistanceIndexUpTo8(di5);
+        indices[6] = UnpackDistanceIndexUpTo8(di6);
+        indices[7] = UnpackDistanceIndexUpTo8(di7);
+      }
+      break;
+    case 7:
+      {
+        uint64_t di0 = PackDistanceIndexUpTo8(distances[0], 0);
+        uint64_t di1 = PackDistanceIndexUpTo8(distances[1], 1);
+        uint64_t di2 = PackDistanceIndexUpTo8(distances[2], 2);
+        uint64_t di3 = PackDistanceIndexUpTo8(distances[3], 3);
+        uint64_t di4 = PackDistanceIndexUpTo8(distances[4], 4);
+        uint64_t di5 = PackDistanceIndexUpTo8(distances[5], 5);
+        uint64_t di6 = PackDistanceIndexUpTo8(distances[6], 6);
+        // Depth 1
+        SwapIfGreater(&di1, &di2);
+        SwapIfGreater(&di3, &di4);
+        SwapIfGreater(&di5, &di6);
+        // Depth 2
+        SwapIfGreater(&di0, &di2);
+        SwapIfGreater(&di3, &di5);
+        SwapIfGreater(&di4, &di6);
+        // Depth 3
+        SwapIfGreater(&di0, &di4);
+        SwapIfGreater(&di1, &di5);
+        SwapIfGreater(&di2, &di6);
+        // Depth 4
+        SwapIfGreater(&di0, &di3);
+        SwapIfGreater(&di2, &di5);
+        // Depth 5
+        SwapIfGreater(&di1, &di3);
+        SwapIfGreater(&di2, &di4);
+        // Depth 6
+        SwapIfGreater(&di0, &di1);
+        SwapIfGreater(&di2, &di3);
+        SwapIfGreater(&di4, &di5);
+        indices[0] = UnpackDistanceIndexUpTo8(di0);
+        indices[1] = UnpackDistanceIndexUpTo8(di1);
+        indices[2] = UnpackDistanceIndexUpTo8(di2);
+        indices[3] = UnpackDistanceIndexUpTo8(di3);
+        indices[4] = UnpackDistanceIndexUpTo8(di4);
+        indices[5] = UnpackDistanceIndexUpTo8(di5);
+        indices[6] = UnpackDistanceIndexUpTo8(di6);
+      }
+      break;
+    case 6:
+      {
+        uint64_t di0 = PackDistanceIndexUpTo8(distances[0], 0);
+        uint64_t di1 = PackDistanceIndexUpTo8(distances[1], 1);
+        uint64_t di2 = PackDistanceIndexUpTo8(distances[2], 2);
+        uint64_t di3 = PackDistanceIndexUpTo8(distances[3], 3);
+        uint64_t di4 = PackDistanceIndexUpTo8(distances[4], 4);
+        uint64_t di5 = PackDistanceIndexUpTo8(distances[5], 5);
+        // Depth 1
+        SwapIfGreater(&di0, &di1);
+        SwapIfGreater(&di2, &di3);
+        SwapIfGreater(&di4, &di5);
+        // Depth 2
+        SwapIfGreater(&di0, &di2);
+        SwapIfGreater(&di3, &di5);
+        SwapIfGreater(&di1, &di4);
+        // Depth 3
+        SwapIfGreater(&di0, &di1);
+        SwapIfGreater(&di2, &di3);
+        SwapIfGreater(&di4, &di5);
+        // Depth 4
+        SwapIfGreater(&di1, &di2);
+        SwapIfGreater(&di3, &di4);
+        // Depth 5
+        SwapIfGreater(&di2, &di3);
+        indices[0] = UnpackDistanceIndexUpTo8(di0);
+        indices[1] = UnpackDistanceIndexUpTo8(di1);
+        indices[2] = UnpackDistanceIndexUpTo8(di2);
+        indices[3] = UnpackDistanceIndexUpTo8(di3);
+        indices[4] = UnpackDistanceIndexUpTo8(di4);
+        indices[5] = UnpackDistanceIndexUpTo8(di5);
+      }
+      break;
+    case 5:
+      {
+        uint64_t di0 = PackDistanceIndexUpTo8(distances[0], 0);
+        uint64_t di1 = PackDistanceIndexUpTo8(distances[1], 1);
+        uint64_t di2 = PackDistanceIndexUpTo8(distances[2], 2);
+        uint64_t di3 = PackDistanceIndexUpTo8(distances[3], 3);
+        uint64_t di4 = PackDistanceIndexUpTo8(distances[4], 4);
+        // Depth 1
+        SwapIfGreater(&di1, &di2);
+        SwapIfGreater(&di3, &di4);
+        // Depth 2
+        SwapIfGreater(&di0, &di2);
+        SwapIfGreater(&di1, &di3);
+        // Depth 3
+        SwapIfGreater(&di0, &di3);
+        SwapIfGreater(&di2, &di4);
+        // Depth 4
+        SwapIfGreater(&di0, &di1);
+        SwapIfGreater(&di2, &di3);
+        // Depth 5
+        SwapIfGreater(&di1, &di2);
+        indices[0] = UnpackDistanceIndexUpTo8(di0);
+        indices[1] = UnpackDistanceIndexUpTo8(di1);
+        indices[2] = UnpackDistanceIndexUpTo8(di2);
+        indices[3] = UnpackDistanceIndexUpTo8(di3);
+        indices[4] = UnpackDistanceIndexUpTo8(di4);
+      }
+      break;
+    case 4:
+      {
+        uint64_t di0 = PackDistanceIndexUpTo8(distances[0], 0);
+        uint64_t di1 = PackDistanceIndexUpTo8(distances[1], 1);
+        uint64_t di2 = PackDistanceIndexUpTo8(distances[2], 2);
+        uint64_t di3 = PackDistanceIndexUpTo8(distances[3], 3);
+        // Depth 1
+        SwapIfGreater(&di0, &di1);
+        SwapIfGreater(&di2, &di3);
+        // Depth 2
+        SwapIfGreater(&di0, &di2);
+        SwapIfGreater(&di1, &di3);
+        // Depth 3
+        SwapIfGreater(&di1, &di2);
+        indices[0] = UnpackDistanceIndexUpTo8(di0);
+        indices[1] = UnpackDistanceIndexUpTo8(di1);
+        indices[2] = UnpackDistanceIndexUpTo8(di2);
+        indices[3] = UnpackDistanceIndexUpTo8(di3);
+      }
+      break;
+    case 3:
+      {
+        uint64_t di0 = PackDistanceIndexUpTo8(distances[0], 0);
+        uint64_t di1 = PackDistanceIndexUpTo8(distances[1], 1);
+        uint64_t di2 = PackDistanceIndexUpTo8(distances[2], 2);
+        // Depth 1
+        SwapIfGreater(&di0, &di1);
+        // Depth 2
+        SwapIfGreater(&di1, &di2);
+        // Depth 3
+        SwapIfGreater(&di0, &di1);
+        indices[0] = UnpackDistanceIndexUpTo8(di0);
+        indices[1] = UnpackDistanceIndexUpTo8(di1);
+        indices[2] = UnpackDistanceIndexUpTo8(di2);
+      }
+      break;
+    case 2:
+      {
+        const bool greater = distances[0] > distances[1];
+        // C++ says bool is always 0 or 1, so for the simple 2 length case,
+        // just directly use the boolean value. If entry 0 is the biggest,
+        // greater is true (1) and the first index should be 1 (as entry 1 is
+        // the smallest) and the other index is always the opposite.
+        indices[0] = greater;
+        indices[1] = !greater;
+      }
+      break;
+    case 1:
+      indices[0] = 0;
+      break;
+    case 0:
+    default:
+      break;
+  }
+}
+
 template <typename NarrowPhaseSolver>
 template <typename BV>
 bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
@@ -625,13 +886,12 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
 
   if(tree1->nodeHasChildren(root1))
   {
-    unsigned int nchildren = 0;
     const typename fcl::OcTree<S>::OcTreeNode* children[8];
     fcl::AABB<S> child_bvs[8];
-    S radius = bv1_radius * 0.5;
     S distances[8];
-    S min_distance = std::numeric_limits<S>::max();
-    S next_min;
+    unsigned indices[8];
+    unsigned int nchildren = 0;
+    S radius = bv1_radius * 0.5;
     const BV& bv2 = tree2->getBV(root2).bv;
     for(unsigned int i = 0; i < 8; ++i)
     {
@@ -643,12 +903,8 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
           children[nchildren] = child;
           computeChildBV(bv1, i, child_bvs[nchildren]);
           distances[nchildren] = distanceOctomapOBBRSS(radius, child_bvs[nchildren].center(), bv2, tf2);
-          dresult_->bv_distance_calculations++;
-          if (distances[nchildren] < min_distance)
-          {
-            min_distance = distances[nchildren];
-          }
           nchildren++;
+          dresult_->bv_distance_calculations++;
         }
       }
     }
@@ -657,37 +913,22 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
     // distance mode when this part of the octree overlaps the root bounding
     // volume of the mesh, as we must check every collision to find the deepest
     // in exact signed distance mode.
-    while(min_distance < rel_err_factor_ * dresult_->min_distance || exact_signed_distance_ && min_distance <= 0)
+    ArgSortUpTo8(nchildren, indices, distances);
+    for (unsigned i = 0; i < nchildren; ++i)
     {
-      next_min = std::numeric_limits<S>::max();
-      for(unsigned int i = 0; i < nchildren; ++i)
+      const unsigned index = indices[i];
+      S min_distance = distances[index];
+      if (min_distance < rel_err_factor_ * dresult_->min_distance || exact_signed_distance_ && min_distance <= 0)
       {
-        if(distances[i] == min_distance)
-        {
-          if(min_distance < rel_err_factor_ * dresult_->min_distance || exact_signed_distance_ && min_distance <= 0)
-          {
-            // Possible a better result is below, descend
-            if(OcTreeMeshDistanceRecurse(tree1, children[i], child_bvs[i], radius, tree2, root2, tf2, roi))
-              return true;
-          }
-          else
-          {
-            break;
-          }
-        }
-        else if(distances[i] > min_distance)
-        {
-          if(distances[i] < next_min)
-          {
-            next_min = distances[i];
-          }
-        }
-        else
-        {
-          // an already visited spot on a previous iteration
-        }
+        // Possible a better result is below, descend
+        if(OcTreeMeshDistanceRecurse(tree1, children[index], child_bvs[index], radius, tree2, root2, tf2, roi))
+          return true;
       }
-      min_distance = next_min;
+      else
+      {
+        // No need to continue the loop, all further entries are too far away.
+        break;
+      }
     }
   }
   else
