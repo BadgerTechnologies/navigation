@@ -39,18 +39,20 @@
 #include <fcl/config.h>
 #include <fcl/geometry/octree/octree.h>
 #include <fcl/broadphase/broadphase_dynamic_AABB_tree.h>
+#include <fcl/broadphase/default_broadphase_callbacks.h>
 #include <costmap_3d/costmap_3d_query.h>
 #include <costmap_3d/octree_solver.h>
 
 static const std::string PACKAGE_URL("package://costmap_3d/");
 
-void octree_solver_test(std::size_t n, double resolution = 0.1, bool negative_x_roi = false, bool non_negative_x_roi = false);
+void octree_solver_test(std::size_t n, bool negative_x_roi = false, bool non_negative_x_roi = false, bool skip_check = false);
 
 TEST(test_octree_solver, test_against_fcl)
 {
-  octree_solver_test(15, 0.1, false, false);
-  octree_solver_test(15, 0.1, true, false);
-  octree_solver_test(15, 0.1, false, true);
+  octree_solver_test(15, false, false);
+  octree_solver_test(15, true, false);
+  octree_solver_test(15, false, true);
+  std::chrono::high_resolution_clock::time_point start_time;
 }
 
 template <typename S>
@@ -104,7 +106,9 @@ void generateRandomTransforms(S extents[6], fcl::aligned_vector<fcl::Transform3<
 template <typename S>
 void generateBoxesFromOctomap(
     const fcl::OcTree<S>& tree,
-    std::vector<std::shared_ptr<fcl::CollisionObject<S>>>* boxes)
+    std::vector<std::shared_ptr<fcl::CollisionObject<S>>>* boxes,
+    bool positive_x_only = false,
+    bool negative_x_only = false)
 {
   std::vector<std::array<S, 6>> tree_boxes = tree.toBoxes();
 
@@ -117,6 +121,10 @@ void generateBoxesFromOctomap(
     S cost = tree_boxes[i][4];
     S threshold = tree_boxes[i][5];
 
+    if (positive_x_only && x + size / 2.0 < 0.0)
+      continue;
+    if (negative_x_only && x - size / 2.0 > 0.0)
+      continue;
     std::shared_ptr<fcl::CollisionGeometry<S>> box(new fcl::Box<S>(size, size, size));
     box->cost_density = cost;
     box->threshold_occupied = threshold;
@@ -154,12 +162,14 @@ bool defaultDistanceFunction(fcl::CollisionObject<S>* o1, fcl::CollisionObject<S
   return cdata->done;
 }
 
-void octree_solver_test(std::size_t n, double resolution, bool negative_x_roi, bool non_negative_x_roi)
+void octree_solver_test(std::size_t n, bool negative_x_roi, bool non_negative_x_roi, bool skip_check)
 {
   using S = costmap_3d::Costmap3DQuery::FCLFloat;
   costmap_3d::Costmap3DPtr octree(new costmap_3d::Costmap3D(
           costmap_3d::Costmap3DQuery::getFileNameFromPackageURL(PACKAGE_URL + "test/aisles.bt")));
   std::shared_ptr<fcl::OcTree<S>> tree_ptr(new fcl::OcTree<S>(octree));
+  tree_ptr->setFreeThres(0.01);
+  tree_ptr->setOccupancyThres(0.5);
 
   // Use Costmap3DQuery to get BVH for test mesh
   costmap_3d::Costmap3DQuery query(octree, PACKAGE_URL + "test/test_robot.stl");
@@ -169,41 +179,41 @@ void octree_solver_test(std::size_t n, double resolution, bool negative_x_roi, b
   if (negative_x_roi)
   {
     fcl::Vector3<S> normal(1.0, 0.0, 0.0);
-    fcl::Halfspace<S> negative_x(normal, -resolution/2.0);
+    fcl::Halfspace<S> negative_x(normal, 0);
     tree_ptr->addToRegionOfInterest(negative_x);
   }
   if (non_negative_x_roi)
   {
     fcl::Vector3<S> normal(-1.0, 0.0, 0.0);
-    fcl::Halfspace<S> non_negative_x(normal, -resolution/2.0);
+    fcl::Halfspace<S> non_negative_x(normal, 0);
     tree_ptr->addToRegionOfInterest(non_negative_x);
   }
 
   fcl::aligned_vector<fcl::Transform3<S>> transforms;
-  S extents[] = {-2, -2, -2, 2, 2, 2};
+  S extents[] = {-10, -10, -2, 10, 10, 2};
 
+  // Ensure transforms are the same even if other tests use rand()
+  srand(1);
   generateRandomTransforms(extents, transforms, n);
-  if (n > 1)
-  {
-    // Be sure to test identity
-    transforms[n - 1] = fcl::Transform3<S>::Identity();
-    transforms[n / 2 - 1] = fcl::Transform3<S>::Identity();
-    transforms[n / 2] = fcl::Transform3<S>::Identity();
-  }
+  // Be sure to test identity
+  transforms[0] = fcl::Transform3<S>::Identity();
 
+  std::chrono::high_resolution_clock::duration total_time(0);
+  std::chrono::high_resolution_clock::time_point start_time;
   for(std::size_t i = 0; i < n; ++i)
   {
-    fcl::Transform3<S> tf1(transforms[i]);
-    fcl::Transform3<S> tf2(transforms[n-1-i]);
-
+    fcl::Transform3<S> tf1(transforms[0]);
+    fcl::Transform3<S> tf2(transforms[i]);
     fcl::detail::GJKSolver_libccd<S> solver;
     costmap_3d::OcTreeMeshSolver<fcl::detail::GJKSolver_libccd<S>> octree_solver(&solver);
     fcl::DistanceRequest<S> request;
     fcl::DistanceResult<S> result;
+    request.abs_err = 0.0;
     request.rel_err = 0.0;
     request.enable_nearest_points = true;
     request.enable_signed_distance = true;
     result.min_distance = std::numeric_limits<S>::max();
+    start_time = std::chrono::high_resolution_clock::now();
     octree_solver.distance(
         tree_ptr.get(),
         m1.get(),
@@ -212,12 +222,14 @@ void octree_solver_test(std::size_t n, double resolution, bool negative_x_roi, b
         request,
         &result);
     S dist1 = result.min_distance;
+    std::cout << " octree iteration " << i << ": " << std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - start_time).count() << "ns" << std::endl;
+    total_time += std::chrono::high_resolution_clock::now() - start_time;
 
     // Check the result against FCL's broadphase distance
     std::vector<std::shared_ptr<fcl::CollisionObject<S>>> boxes;
-    generateBoxesFromOctomap<S>(*tree_ptr, &boxes);
+    generateBoxesFromOctomap<S>(*tree_ptr, &boxes, non_negative_x_roi, negative_x_roi);
     for(std::size_t j = 0; j < boxes.size(); ++j)
-      boxes[j]->setTransform(tf2 * boxes[j]->getTransform());
+      boxes[j]->setTransform(tf1 * boxes[j]->getTransform());
 
     fcl::DynamicAABBTreeCollisionManager<S> manager;
     for (auto box : boxes)
@@ -227,8 +239,13 @@ void octree_solver_test(std::size_t n, double resolution, bool negative_x_roi, b
     manager.setup();
 
     DistanceData<S> cdata2;
-    fcl::CollisionObject<S> obj1(std::const_pointer_cast<fcl::CollisionGeometry<S>>(m1_ptr), tf1);
-    manager.distance(&obj1, &cdata2, defaultDistanceFunction);
+    fcl::CollisionObject<S> obj1(std::const_pointer_cast<fcl::CollisionGeometry<S>>(m1_ptr), tf2);
+    cdata2.request.abs_err = 0.0;
+    cdata2.request.rel_err = 0.0;
+    cdata2.request.enable_nearest_points = true;
+    cdata2.request.enable_signed_distance = false;
+    cdata2.result.min_distance = std::numeric_limits<S>::max();
+    manager.distance(&obj1, &cdata2, fcl::DefaultDistanceFunction);
     S dist2 = cdata2.result.min_distance;
 
     if (dist1 > 1e-6 && dist2 > 1e-6)
@@ -242,6 +259,7 @@ void octree_solver_test(std::size_t n, double resolution, bool negative_x_roi, b
       EXPECT_TRUE(dist1 < 1e-6 && dist2 < 1e-6);
     }
   }
+  std::cout << "Average time per octree solve: " << std::chrono::duration_cast<std::chrono::nanoseconds>(total_time).count() / n << "ns" << std::endl;
 }
 
 int main(int argc, char* argv[])
