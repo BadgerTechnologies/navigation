@@ -123,7 +123,7 @@ public:
                 const fcl::Transform3<S>& tf1,
                 const fcl::Transform3<S>& tf2,
                 const fcl::DistanceRequest<S>& request,
-                fcl::DistanceResult<S>* result) const;
+                fcl::DistanceResult<S>* result);
 
   /** Put the solver in uncertain only mode.
    *
@@ -143,14 +143,13 @@ private:
   const NarrowPhaseSolver* solver_;
   InteriorCollisionFunction interior_collision_function_;
   SignedDistanceFunction signed_distance_function_;
-  // This is only mutated when OcTreeMeshDistance is called and is used to
-  // keep from having to put the request and result on the stack for every
-  // recursive call.
-  mutable const fcl::DistanceRequest<S>* drequest_ = nullptr;
-  mutable fcl::DistanceResult<S>* dresult_ = nullptr;
-  mutable fcl::Transform3<S> mesh_tf_inverse_;
-  mutable double rel_err_factor_;
-  mutable bool interior_collision_;
+  // Store many of the query options here to prevent having to put them on the
+  // stack during recursion.
+  const fcl::DistanceRequest<S>* drequest_ = nullptr;
+  fcl::DistanceResult<S>* dresult_ = nullptr;
+  fcl::Transform3<S> mesh_tf_inverse_;
+  double rel_err_factor_;
+  bool interior_collision_;
   bool uncertain_only_ = false;
   bool exact_signed_distance_ = false;
 
@@ -176,7 +175,7 @@ private:
                                  const fcl::BVHModel<BV>* tree2,
                                  int root2,
                                  const fcl::Transform3<S>& tf2,
-                                 const std::vector<fcl::Halfspace<S>>* roi) const;
+                                 const std::vector<fcl::Halfspace<S>>* roi);
 };
 
 template <typename NarrowPhaseSolver>
@@ -187,7 +186,7 @@ void OcTreeMeshSolver<NarrowPhaseSolver>::distance(
     const fcl::Transform3<S>& tf1,
     const fcl::Transform3<S>& tf2,
     const fcl::DistanceRequest<S>& request,
-    fcl::DistanceResult<S>* result) const
+    fcl::DistanceResult<S>* result)
 {
   drequest_ = &request;
   dresult_ = result;
@@ -303,7 +302,7 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
     const fcl::BVHModel<BV>* tree2,
     int root2,
     const fcl::Transform3<S>& tf2,
-    const std::vector<fcl::Halfspace<S>>* roi) const
+    const std::vector<fcl::Halfspace<S>>* roi)
 {
   // First check region of interest.
   if (roi)
