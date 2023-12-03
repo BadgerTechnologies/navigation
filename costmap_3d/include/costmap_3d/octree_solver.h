@@ -64,6 +64,8 @@ template <typename NarrowPhaseSolver>
 class OcTreeMeshSolver
 {
   using S = typename NarrowPhaseSolver::S;
+  // Only OBBRSS Meshes are supported
+  using BV = typename fcl::OBBRSS<S>;
 public:
   // Function returning the negative penetration distance of the box into the
   // mesh. If the box is not entirely within the mesh, this function may simply
@@ -117,7 +119,6 @@ public:
    *
    * Note: request and result must not be shared between threads.
    */
-  template <typename BV>
   void distance(const fcl::OcTree<S>* tree1,
                 const fcl::BVHModel<BV>* tree2,
                 const fcl::Transform3<S>& tf1,
@@ -145,9 +146,16 @@ private:
   SignedDistanceFunction signed_distance_function_;
   // Store many of the query options here to prevent having to put them on the
   // stack during recursion.
+  const fcl::OcTree<S>* octree_;
+  const fcl::BVHModel<BV>* mesh_;
   const fcl::DistanceRequest<S>* drequest_ = nullptr;
   fcl::DistanceResult<S>* dresult_ = nullptr;
+  fcl::Transform3<S> mesh_tf_;
   fcl::Transform3<S> mesh_tf_inverse_;
+  const typename fcl::OcTree<S>::OcTreeNode* leaf_;
+  const fcl::AABB<S>* leaf_bv_;
+  fcl::Vector3<S> leaf_bv_center_;
+  S leaf_bv_radius_;
   // For an average query, around a thousand OBB comparisons happen, and each
   // one of them needs the inverse TF to put the octomap BV into the OBB
   // frame. It is much cheaper on average to pre-compute all the inverse TFs
@@ -172,40 +180,22 @@ private:
         tree->isNodeOccupied(node);
   }
 
-  template <typename BV>
-  bool OcTreeMeshDistanceRecurse(const fcl::OcTree<S>* tree1,
-                                 const typename fcl::OcTree<S>::OcTreeNode* root1,
+  bool OcTreeMeshDistanceRecurse(const typename fcl::OcTree<S>::OcTreeNode* root1,
                                  const fcl::AABB<S>& bv1,
                                  S bv1_radius,
-                                 const fcl::BVHModel<BV>* tree2,
-                                 int root2,
-                                 const fcl::Transform3<S>& tf2,
                                  const std::vector<fcl::Halfspace<S>>* roi);
 
   // Recurse the mesh on a specific OcTree cell
-  template <typename BV>
-  bool MeshDistanceRecurse(const fcl::OcTree<S>* tree1,
-                           const typename fcl::OcTree<S>::OcTreeNode* root1,
-                           const fcl::AABB<S>& bv1,
-                           S bv1_radius,
-                           const fcl::BVHModel<BV>* tree2,
-                           int root2,
-                           const fcl::Transform3<S>& tf2);
+  bool MeshDistanceRecurse(int root2);
 
   // Start mesh distance checks. This function checks the interior collision
   // LUT prior to recursion.
-  template <typename BV>
-  bool MeshDistanceStart(const fcl::OcTree<S>* tree1,
-                         const typename fcl::OcTree<S>::OcTreeNode* root1,
+  bool MeshDistanceStart(const typename fcl::OcTree<S>::OcTreeNode* root1,
                          const fcl::AABB<S>& bv1,
-                         S bv1_radius,
-                         const fcl::BVHModel<BV>* tree2,
-                         int root2,
-                         const fcl::Transform3<S>& tf2);
+                         S bv1_radius);
 };
 
 template <typename NarrowPhaseSolver>
-template <typename BV>
 void OcTreeMeshSolver<NarrowPhaseSolver>::distance(
     const fcl::OcTree<S>* tree1,
     const fcl::BVHModel<BV>* tree2,
@@ -214,11 +204,12 @@ void OcTreeMeshSolver<NarrowPhaseSolver>::distance(
     const fcl::DistanceRequest<S>& request,
     fcl::DistanceResult<S>* result)
 {
+  octree_ = tree1;
+  mesh_ = tree2;
   drequest_ = &request;
   dresult_ = result;
-
-  fcl::Transform3<S> mesh_tf = tf1.inverse() * tf2;
-  mesh_tf_inverse_ = mesh_tf.inverse();
+  mesh_tf_ = tf1.inverse() * tf2;
+  mesh_tf_inverse_ = mesh_tf_.inverse();
   rel_err_factor_ = 1.0 - drequest_->rel_err;
   interior_collision_ = false;
 
@@ -230,7 +221,7 @@ void OcTreeMeshSolver<NarrowPhaseSolver>::distance(
     fcl::Transform3<S> obb_internal_tf;
     obb_internal_tf.linear() = obb.axis;
     obb_internal_tf.translation() = obb.To;
-    world_to_obb_internal_tfs_.push_back((mesh_tf * obb_internal_tf).inverse());
+    world_to_obb_internal_tfs_.push_back((mesh_tf_ * obb_internal_tf).inverse());
   }
 
   // Skip if the entire tree is not occupied, as the occupied check is carried
@@ -241,13 +232,9 @@ void OcTreeMeshSolver<NarrowPhaseSolver>::distance(
   if (!isNodeConsideredOccupied(tree1, tree1->getRoot()))
     return;
 
-  OcTreeMeshDistanceRecurse(tree1,
-                            tree1->getRoot(),
+  OcTreeMeshDistanceRecurse(tree1->getRoot(),
                             tree1->getRootBV(),
                             tree1->getRootBV().radius(),
-                            tree2,
-                            0,
-                            mesh_tf,
                             &tree1->getRegionOfInterest());
 }
 
@@ -428,16 +415,15 @@ inline int checkROI(const fcl::AABB<S>& bv1, const std::vector<fcl::Halfspace<S>
 }
 
 template <typename NarrowPhaseSolver>
-template <typename BV>
-bool OcTreeMeshSolver<NarrowPhaseSolver>::MeshDistanceRecurse(
-    const fcl::OcTree<S>* tree1,
-    const typename fcl::OcTree<S>::OcTreeNode* root1,
-    const fcl::AABB<S>& bv1,
-    S bv1_radius,
-    const fcl::BVHModel<BV>* tree2,
-    int root2,
-    const fcl::Transform3<S>& tf2)
+bool OcTreeMeshSolver<NarrowPhaseSolver>::MeshDistanceRecurse(int root2)
 {
+  const fcl::OcTree<S>* tree1 = octree_;
+  const typename fcl::OcTree<S>::OcTreeNode* root1 = leaf_;
+  const fcl::AABB<S>& bv1 = *leaf_bv_;
+  const fcl::Vector3<S>& bv1_center = leaf_bv_center_;
+  S bv1_radius = leaf_bv_radius_;
+  const fcl::BVHModel<BV>* tree2 = mesh_;
+  const fcl::Transform3<S>& tf2 = mesh_tf_;
   if(tree2->getBV(root2).isLeaf())
   {
     fcl::Box<S> box;
@@ -477,7 +463,6 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::MeshDistanceRecurse(
   }
   else
   {
-    const fcl::Vector3<S> bv1_center(bv1.center());
     int children[2] = {
       tree2->getBV(root2).leftChild(),
       tree2->getBV(root2).rightChild()};
@@ -498,7 +483,7 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::MeshDistanceRecurse(
     {
       if(d[i] < rel_err_factor_ * dresult_->min_distance)
       {
-        if(MeshDistanceRecurse(tree1, root1, bv1, bv1_radius, tree2, children[i], tf2))
+        if(MeshDistanceRecurse(children[i]))
           return true;
       }
     }
@@ -508,16 +493,13 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::MeshDistanceRecurse(
 }
 
 template <typename NarrowPhaseSolver>
-template <typename BV>
 bool OcTreeMeshSolver<NarrowPhaseSolver>::MeshDistanceStart(
-    const fcl::OcTree<S>* tree1,
     const typename fcl::OcTree<S>::OcTreeNode* root1,
     const fcl::AABB<S>& bv1,
-    S bv1_radius,
-    const fcl::BVHModel<BV>* tree2,
-    int root2,
-    const fcl::Transform3<S>& tf2)
+    S bv1_radius)
 {
+  const fcl::OcTree<S>* tree1 = octree_;
+  const fcl::BVHModel<BV>* tree2 = mesh_;
   // There is no way (that I can think of) to correctly direct the search to
   // avoid having to test each box that touches the bounding volume of the
   // whole mesh. So, to make it take a reasonable amount of time to check each
@@ -568,7 +550,7 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::MeshDistanceStart(
     S collision_distance = interior_collision_function_(
         box,
         box_tf,
-        tf2,
+        mesh_tf_,
         mesh_tf_inverse_,
         &primitive_id);
     if (collision_distance < 0.0)
@@ -585,7 +567,7 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::MeshDistanceStart(
       // Just return the center point of the box.
       dresult_->update(collision_distance, tree1, tree2, root1 - tree1->getRoot(), primitive_id,
                        box_tf.translation(), box_tf.translation(),
-                       box_ptr, box_tf, triangle, tf2);
+                       box_ptr, box_tf, triangle, mesh_tf_);
       // For exact signed distance, keep going and checking other colliding cells
       return !exact_signed_distance_;
     }
@@ -599,7 +581,13 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::MeshDistanceStart(
       return false;
     }
   }
-  return MeshDistanceRecurse(tree1, root1, bv1, bv1_radius, tree2, root2, tf2);
+  // Record the child octree node and octree bv information in the instance of
+  // the class to avoid passing it around on the stack during mesh descent.
+  leaf_ = root1;
+  leaf_bv_ = &bv1;
+  leaf_bv_center_ = bv1.center();
+  leaf_bv_radius_ = bv1_radius;
+  return MeshDistanceRecurse(0);
 }
 
 template <typename S>
@@ -864,17 +852,13 @@ static inline void ArgSortUpTo8(unsigned n, I* indices, const S* distances)
 }
 
 template <typename NarrowPhaseSolver>
-template <typename BV>
 bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
-    const fcl::OcTree<S>* tree1,
     const typename fcl::OcTree<S>::OcTreeNode* root1,
     const fcl::AABB<S>& bv1,
     S bv1_radius,
-    const fcl::BVHModel<BV>* tree2,
-    int root2,
-    const fcl::Transform3<S>& tf2,
     const std::vector<fcl::Halfspace<S>>* roi)
 {
+  const fcl::OcTree<S>* tree1 = octree_;
   // First check region of interest.
   if (roi)
   {
@@ -901,7 +885,7 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
     unsigned indices[8];
     unsigned int nchildren = 0;
     S radius = bv1_radius * 0.5;
-    const BV& bv2 = tree2->getBV(root2).bv;
+    const BV& bv2 = mesh_->getBV(0).bv;
     for(unsigned int i = 0; i < 8; ++i)
     {
       if(tree1->nodeChildExists(root1, i))
@@ -911,7 +895,7 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
         {
           children[nchildren] = child;
           computeChildBV(bv1, i, child_bvs[nchildren]);
-          distances[nchildren] = distanceOctomapOBBRSS(radius, child_bvs[nchildren].center(), bv2, world_to_obb_internal_tfs_[root2]);
+          distances[nchildren] = distanceOctomapOBBRSS(radius, child_bvs[nchildren].center(), bv2, world_to_obb_internal_tfs_[0]);
           nchildren++;
           dresult_->bv_distance_calculations++;
         }
@@ -930,7 +914,7 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
       if (min_distance < rel_err_factor_ * dresult_->min_distance || exact_signed_distance_ && min_distance <= 0)
       {
         // Possible a better result is below, descend
-        if(OcTreeMeshDistanceRecurse(tree1, children[index], child_bvs[index], radius, tree2, root2, tf2, roi))
+        if(OcTreeMeshDistanceRecurse(children[index], child_bvs[index], radius, roi))
           return true;
       }
       else
@@ -944,7 +928,7 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
   {
     // Because we descend the octree first, there is no need to check the
     // ROI when descending the mesh.
-    return MeshDistanceStart(tree1, root1, bv1, bv1_radius, tree2, root2, tf2);
+    return MeshDistanceStart(root1, bv1, bv1_radius);
   }
 
   // This happens if the search under this region of the octree failed to find
