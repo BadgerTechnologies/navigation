@@ -386,6 +386,23 @@ inline S distanceOctomapOBBRSS(
       world_to_bv2_internal_tf);
 }
 
+// Version of FCL's computeChildBV that is branchless and inline. The octree
+// descent uses computeChildBV on a fast-path, so it needs to run as fast as
+// possible.
+template <typename S>
+static inline void computeChildMinMax(const fcl::AABB<S>& root_bv, unsigned int i, fcl::Vector3<S>& child_min, fcl::Vector3<S>& child_max)
+{
+  const fcl::Vector3<S> root_bv_min = root_bv.min_;
+  const fcl::Vector3<S> root_bv_max = root_bv.max_;
+  const fcl::Vector3<S> root_bv_center = (root_bv_min + root_bv_max) * 0.5;
+  child_min[0] = (i&1) ? root_bv_center[0] : root_bv_min[0];
+  child_max[0] = (i&1) ? root_bv_max[0] : root_bv_center[0];
+  child_min[1] = (i&2) ? root_bv_center[1] : root_bv_min[1];
+  child_max[1] = (i&2) ? root_bv_max[1] : root_bv_center[1];
+  child_min[2] = (i&4) ? root_bv_center[2] : root_bv_min[2];
+  child_max[2] = (i&4) ? root_bv_max[2] : root_bv_center[2];
+}
+
 // return -1 if bv1 out of roi, 1 if in, and 0 if on.
 template <typename S>
 inline int checkROI(const fcl::AABB<S>& bv1, const std::vector<fcl::Halfspace<S>>* roi)
@@ -898,7 +915,7 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
   if(tree1->nodeHasChildren(root1))
   {
     const typename fcl::OcTree<S>::OcTreeNode* children[8];
-    fcl::AABB<S> child_bvs[8];
+    fcl::Vector3<S> child_mins[8], child_maxs[8];
     S distances[8];
     unsigned indices[8];
     unsigned int nchildren = 0;
@@ -912,8 +929,9 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
         if(isNodeConsideredOccupied(tree1, child))
         {
           children[nchildren] = child;
-          computeChildBV(bv1, i, child_bvs[nchildren]);
-          distances[nchildren] = distanceOctomapOBBRSS(radius, child_bvs[nchildren].center(), bv2, world_to_obb_internal_tfs_[0]);
+          computeChildMinMax(bv1, i, child_mins[nchildren], child_maxs[nchildren]);
+          const fcl::Vector3<S> child_bv_center = (child_mins[nchildren] + child_maxs[nchildren]) * 0.5;
+          distances[nchildren] = distanceOctomapOBBRSS(radius, child_bv_center, bv2, world_to_obb_internal_tfs_[0]);
           nchildren++;
           dresult_->bv_distance_calculations++;
         }
@@ -932,14 +950,18 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
       if (min_distance < rel_err_factor_ * dresult_->min_distance || exact_signed_distance_ && min_distance <= 0)
       {
         // Possible a better result is below, descend
+        // No way to directly construct an AABB with a given min/max. Just use
+        // the single-point constructor and directly set the max.
+        fcl::AABB<S> child_bv(child_mins[index]);
+        child_bv.max_ = child_maxs[index];
         if (check_roi && !entirely_inside_roi)
         {
-          if(OcTreeMeshDistanceRecurse<true>(children[index], child_bvs[index], radius))
+          if(OcTreeMeshDistanceRecurse<true>(children[index], child_bv, radius))
             return true;
         }
         else
         {
-          if(OcTreeMeshDistanceRecurse<false>(children[index], child_bvs[index], radius))
+          if(OcTreeMeshDistanceRecurse<false>(children[index], child_bv, radius))
             return true;
         }
       }
