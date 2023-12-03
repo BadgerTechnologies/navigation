@@ -516,6 +516,11 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::MeshDistanceRecurse(int root2)
         if(MeshDistanceRecurse(children[i]))
           return true;
       }
+      else
+      {
+        // No need to continue the loop, the other entry is too far away.
+        break;
+      }
     }
   }
 
