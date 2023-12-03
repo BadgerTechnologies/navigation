@@ -211,7 +211,7 @@ void OcTreeMeshSolver<NarrowPhaseSolver>::distance(
   dresult_ = result;
   mesh_tf_ = tf1.inverse() * tf2;
   mesh_tf_inverse_ = mesh_tf_.inverse();
-  rel_err_factor_ = 1.0 - drequest_->rel_err;
+  rel_err_factor_ = std::max(std::min(1.0 - drequest_->rel_err, 1.0), 0.0);
   interior_collision_ = false;
 
   world_to_obb_internal_tfs_.clear();
