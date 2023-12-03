@@ -147,6 +147,7 @@ private:
   // Store many of the query options here to prevent having to put them on the
   // stack during recursion.
   const fcl::OcTree<S>* octree_;
+  const std::vector<fcl::Halfspace<S>>* roi_;
   const fcl::BVHModel<BV>* mesh_;
   const fcl::DistanceRequest<S>* drequest_ = nullptr;
   fcl::DistanceResult<S>* dresult_ = nullptr;
@@ -180,10 +181,10 @@ private:
         tree->isNodeOccupied(node);
   }
 
+  template <bool check_roi>
   bool OcTreeMeshDistanceRecurse(const typename fcl::OcTree<S>::OcTreeNode* root1,
                                  const fcl::AABB<S>& bv1,
-                                 S bv1_radius,
-                                 const std::vector<fcl::Halfspace<S>>* roi);
+                                 S bv1_radius);
 
   // Recurse the mesh on a specific OcTree cell
   bool MeshDistanceRecurse(int root2);
@@ -232,10 +233,22 @@ void OcTreeMeshSolver<NarrowPhaseSolver>::distance(
   if (!isNodeConsideredOccupied(tree1, tree1->getRoot()))
     return;
 
-  OcTreeMeshDistanceRecurse(tree1->getRoot(),
-                            tree1->getRootBV(),
-                            tree1->getRootBV().radius(),
-                            &tree1->getRegionOfInterest());
+  const std::vector<fcl::Halfspace<S>>* roi = &tree1->getRegionOfInterest();
+  roi_ = &tree1->getRegionOfInterest();
+  if (roi_ == nullptr)
+  {
+    OcTreeMeshDistanceRecurse<false>(
+        tree1->getRoot(),
+        tree1->getRootBV(),
+        tree1->getRootBV().radius());
+  }
+  else
+  {
+    OcTreeMeshDistanceRecurse<true>(
+        tree1->getRoot(),
+        tree1->getRootBV(),
+        tree1->getRootBV().radius());
+  }
 }
 
 template <typename S>
@@ -852,17 +865,18 @@ static inline void ArgSortUpTo8(unsigned n, I* indices, const S* distances)
 }
 
 template <typename NarrowPhaseSolver>
+template <bool check_roi>
 bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
     const typename fcl::OcTree<S>::OcTreeNode* root1,
     const fcl::AABB<S>& bv1,
-    S bv1_radius,
-    const std::vector<fcl::Halfspace<S>>* roi)
+    S bv1_radius)
 {
   const fcl::OcTree<S>* tree1 = octree_;
   // First check region of interest.
-  if (roi)
+  bool entirely_inside_roi;
+  if (check_roi)
   {
-    int rv = checkROI<S>(bv1, roi);
+    int rv = checkROI<S>(bv1, roi_);
     if (rv == -1)
     {
       // this octomap region is entirely out of the region of interest
@@ -873,7 +887,11 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
       // this octomap region is entirely inside the region of interest.
       // There is no need to check any sub-region. Null out the roi for
       // subsequent recursive calls.
-      roi = nullptr;
+      entirely_inside_roi = true;
+    }
+    else
+    {
+      entirely_inside_roi = false;
     }
   }
 
@@ -914,8 +932,16 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
       if (min_distance < rel_err_factor_ * dresult_->min_distance || exact_signed_distance_ && min_distance <= 0)
       {
         // Possible a better result is below, descend
-        if(OcTreeMeshDistanceRecurse(children[index], child_bvs[index], radius, roi))
-          return true;
+        if (check_roi && !entirely_inside_roi)
+        {
+          if(OcTreeMeshDistanceRecurse<true>(children[index], child_bvs[index], radius))
+            return true;
+        }
+        else
+        {
+          if(OcTreeMeshDistanceRecurse<false>(children[index], child_bvs[index], radius))
+            return true;
+        }
       }
       else
       {
