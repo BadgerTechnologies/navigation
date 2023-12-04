@@ -1045,42 +1045,43 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
 
   double distance;
 
-  // Because FCL's OcTree/Mesh distance treats the Mesh as hollow, we must
-  // use our own distance code which treats the Mesh as a closed mesh
-  // defining a filled volume. Otherwise, there are cases where an octomap
-  // box is inside the mesh, but the distance is positive.
-  // The solver and octree_solver need to be on the stack as they are not
-  // thread-safe.
-  FCLSolver solver;
-  // Use our interior collision LUT to model the robot as a volume.
-  // Use box-halfspace distance to model box/mesh penetrations for signed distance.
-  OcTreeMeshSolver<FCLSolver> octree_solver(
-      &solver,
-      std::bind(&InteriorCollisionLUT<FCLFloat>::distance,
-                &interior_collision_lut_,
-                std::placeholders::_1,
-                std::placeholders::_2,
-                std::placeholders::_3,
-                std::placeholders::_4,
-                std::placeholders::_5),
-      std::bind(&Costmap3DQuery::boxHalfspaceSignedDistance,
-                this,
-                std::placeholders::_1,
-                std::placeholders::_2,
-                std::placeholders::_3,
-                std::placeholders::_4));
-  if (query_obstacles == NONLETHAL_ONLY)
-  {
-    octree_solver.setUncertainOnly(true);
-  }
-
-  if (opts.exact_signed_distance)
-  {
-    octree_solver.setExactSignedDistance(true);
-  }
-
   if (result.min_distance > 0.0 || opts.exact_signed_distance)
   {
+    // Because FCL's OcTree/Mesh distance treats the Mesh as hollow, we must
+    // use our own distance code which treats the Mesh as a closed mesh
+    // defining a filled volume. Otherwise, there are cases where an octomap
+    // box is inside the mesh, but the distance is positive.
+    // The solver and octree_solver need to be on the stack as they are not
+    // thread-safe.
+    FCLSolver solver;
+    // Use our interior collision LUT to model the robot as a volume.
+    // Use box-halfspace distance to model box/mesh penetrations for signed distance.
+    OcTreeMeshSolver<FCLSolver> octree_solver(
+        &solver,
+        std::bind(&InteriorCollisionLUT<FCLFloat>::distance,
+                  &interior_collision_lut_,
+                  std::placeholders::_1,
+                  std::placeholders::_2,
+                  std::placeholders::_3,
+                  std::placeholders::_4,
+                  std::placeholders::_5),
+        std::bind(&Costmap3DQuery::boxHalfspaceSignedDistance,
+                  this,
+                  std::placeholders::_1,
+                  std::placeholders::_2,
+                  std::placeholders::_3,
+                  std::placeholders::_4));
+
+    if (query_obstacles == NONLETHAL_ONLY)
+    {
+      octree_solver.setUncertainOnly(true);
+    }
+
+    if (opts.exact_signed_distance)
+    {
+      octree_solver.setExactSignedDistance(true);
+    }
+
     fcl::OcTree<FCLFloat> fcl_octree(octree_to_query);
     // Always setup the correct occupancy limits
     fcl_octree.setFreeThres(octomap::probability(FREE));
