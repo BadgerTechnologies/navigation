@@ -183,7 +183,7 @@ private:
 
   template <bool check_roi>
   bool OcTreeMeshDistanceRecurse(const typename fcl::OcTree<S>::OcTreeNode* root1,
-                                 const fcl::AABB<S>& bv1,
+                                 fcl::AABB<S>* bv1,
                                  S bv1_radius);
 
   // Recurse the mesh on a specific OcTree cell
@@ -235,19 +235,20 @@ void OcTreeMeshSolver<NarrowPhaseSolver>::distance(
 
   const std::vector<fcl::Halfspace<S>>* roi = &tree1->getRegionOfInterest();
   roi_ = &tree1->getRegionOfInterest();
+  fcl::AABB<S> root_bv(tree1->getRootBV());
   if (roi_ == nullptr)
   {
     OcTreeMeshDistanceRecurse<false>(
         tree1->getRoot(),
-        tree1->getRootBV(),
-        tree1->getRootBV().radius());
+        &root_bv,
+        root_bv.radius());
   }
   else
   {
     OcTreeMeshDistanceRecurse<true>(
         tree1->getRoot(),
-        tree1->getRootBV(),
-        tree1->getRootBV().radius());
+        &root_bv,
+        root_bv.radius());
   }
 }
 
@@ -890,15 +891,54 @@ template <typename NarrowPhaseSolver>
 template <bool check_roi>
 bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
     const typename fcl::OcTree<S>::OcTreeNode* root1,
-    const fcl::AABB<S>& bv1,
+    fcl::AABB<S>* bv1,
     S bv1_radius)
 {
   const fcl::OcTree<S>* tree1 = octree_;
-  // First check region of interest.
+  unsigned int nchildren;
+  const typename fcl::OcTree<S>::OcTreeNode* children[8];
+  fcl::Vector3<S> child_mins[8], child_maxs[8];
+
+  // First calculate information about the children of this part of the octree.
+  for (;;)
+  {
+    nchildren = 0;
+    if (tree1->nodeHasChildren(root1))
+    {
+      for (unsigned int i = 0; i < 8; ++i)
+      {
+        if (tree1->nodeChildExists(root1, i))
+        {
+          const typename fcl::OcTree<S>::OcTreeNode* child = tree1->getNodeChild(root1, i);
+          if (isNodeConsideredOccupied(tree1, child))
+          {
+            children[nchildren] = child;
+            computeChildMinMax(*bv1, i, child_mins[nchildren], child_maxs[nchildren]);
+            nchildren++;
+          }
+        }
+      }
+    }
+    // If there are zero, two or more children, jump out of this loop and go
+    // on, otherwise there is only one child present. When only one child is
+    // present, skip all the below calculations descend into the single child.
+    // The ROI and BV distance calculations below will all be more accurate
+    // with the next single child (which represents a smaller volume) than the
+    // current one so can simply be skipped. This also saves a recursive call
+    // (which is only a small cost, but something).
+    if (nchildren != 1)
+      break;
+    root1 = children[0];
+    bv1_radius *= 0.5;
+    bv1->min_ = child_mins[0];
+    bv1->max_ = child_maxs[0];
+  }
+
+  // Check region of interest.
   bool entirely_inside_roi;
   if (check_roi)
   {
-    int rv = checkROI<S>(bv1, roi_);
+    int rv = checkROI<S>(*bv1, roi_);
     if (rv == -1)
     {
       // this octomap region is entirely out of the region of interest
@@ -917,31 +957,18 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
     }
   }
 
-  if(tree1->nodeHasChildren(root1))
+  if (nchildren > 0)
   {
-    const typename fcl::OcTree<S>::OcTreeNode* children[8];
-    fcl::Vector3<S> child_mins[8], child_maxs[8];
-    S distances[8];
-    unsigned indices[8];
-    unsigned int nchildren = 0;
+    S distances[nchildren];
+    unsigned indices[nchildren];
     S radius = bv1_radius * 0.5;
     const BV& bv2 = mesh_->getBV(0).bv;
-    for(unsigned int i = 0; i < 8; ++i)
+    for(unsigned int i = 0; i < nchildren; ++i)
     {
-      if(tree1->nodeChildExists(root1, i))
-      {
-        const typename fcl::OcTree<S>::OcTreeNode* child = tree1->getNodeChild(root1, i);
-        if(isNodeConsideredOccupied(tree1, child))
-        {
-          children[nchildren] = child;
-          computeChildMinMax(bv1, i, child_mins[nchildren], child_maxs[nchildren]);
-          const fcl::Vector3<S> child_bv_center = (child_mins[nchildren] + child_maxs[nchildren]) * 0.5;
-          distances[nchildren] = distanceOctomapOBBRSS(radius, child_bv_center, bv2, world_to_obb_internal_tfs_[0]);
-          nchildren++;
-          dresult_->bv_distance_calculations++;
-        }
-      }
+      const fcl::Vector3<S> child_bv_center = (child_mins[i] + child_maxs[i]) * 0.5;
+      distances[i] = distanceOctomapOBBRSS(radius, child_bv_center, bv2, world_to_obb_internal_tfs_[0]);
     }
+    dresult_->bv_distance_calculations += nchildren;
     // Visit the octree from closest to furthest and quit early when we have
     // crossed the result min distance. Do keep going though in exact signed
     // distance mode when this part of the octree overlaps the root bounding
@@ -961,12 +988,12 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
         child_bv.max_ = child_maxs[index];
         if (check_roi && !entirely_inside_roi)
         {
-          if(OcTreeMeshDistanceRecurse<true>(children[index], child_bv, radius))
+          if(OcTreeMeshDistanceRecurse<true>(children[index], &child_bv, radius))
             return true;
         }
         else
         {
-          if(OcTreeMeshDistanceRecurse<false>(children[index], child_bv, radius))
+          if(OcTreeMeshDistanceRecurse<false>(children[index], &child_bv, radius))
             return true;
         }
       }
@@ -981,7 +1008,7 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
   {
     // Because we descend the octree first, there is no need to check the
     // ROI when descending the mesh.
-    return MeshDistanceStart(root1, bv1, bv1_radius);
+    return MeshDistanceStart(root1, *bv1, bv1_radius);
   }
 
   // This happens if the search under this region of the octree failed to find
