@@ -80,6 +80,9 @@ void Costmap3D::init()
 std::shared_ptr<Costmap3D> Costmap3D::nonlethalOnly() const
 {
   std::shared_ptr<Costmap3D> out(new Costmap3D(resolution));
+  // Set the occupancy threshold of the non-lethal only tree such that
+  // non-lethal cells are considered occupied.
+  out->setOccupancyThres(octomap::probability(FREE));
   auto it = begin_leafs();
   auto end = end_leafs();
   while (it != end)

@@ -366,26 +366,27 @@ void octree_solver_test(std::size_t n, bool negative_x_roi, bool non_negative_x_
   using S = costmap_3d::Costmap3DQuery::FCLFloat;
   costmap_3d::Costmap3DPtr octree(new costmap_3d::Costmap3D(
           costmap_3d::Costmap3DQuery::getFileNameFromPackageURL(PACKAGE_URL + "test/aisles.bt")));
+  // Ensure occupancy threshold is setup properly.
+  octree->setOccupancyThres(0.5);
   std::shared_ptr<fcl::OcTree<S>> tree_ptr(new fcl::OcTree<S>(octree));
-  tree_ptr->setFreeThres(0.01);
-  tree_ptr->setOccupancyThres(0.5);
 
   // Use Costmap3DQuery to get BVH for test mesh
   costmap_3d::Costmap3DQuery query(octree, PACKAGE_URL + "test/test_robot.stl");
   costmap_3d::Costmap3DQuery::FCLRobotModelConstPtr m1 = query.getFCLRobotModel();
   std::shared_ptr<const fcl::CollisionGeometry<S>> m1_ptr(m1);
 
+  std::vector<fcl::Halfspace<S>> roi;
   if (negative_x_roi)
   {
     fcl::Vector3<S> normal(1.0, 0.0, 0.0);
     fcl::Halfspace<S> negative_x(normal, 0);
-    tree_ptr->addToRegionOfInterest(negative_x);
+    roi.push_back(negative_x);
   }
   if (non_negative_x_roi)
   {
     fcl::Vector3<S> normal(-1.0, 0.0, 0.0);
     fcl::Halfspace<S> non_negative_x(normal, 0);
-    tree_ptr->addToRegionOfInterest(non_negative_x);
+    roi.push_back(non_negative_x);
   }
 
   fcl::aligned_vector<fcl::Transform3<S>> transforms;
@@ -405,16 +406,14 @@ void octree_solver_test(std::size_t n, bool negative_x_roi, bool non_negative_x_
     fcl::Transform3<S> tf2(transforms[i]);
     fcl::detail::GJKSolver_libccd<S> solver;
     costmap_3d::OcTreeMeshSolver<fcl::detail::GJKSolver_libccd<S>> octree_solver(&solver);
-    fcl::DistanceRequest<S> request;
-    fcl::DistanceResult<S> result;
-    request.abs_err = 0.0;
+    costmap_3d::OcTreeMeshSolver<fcl::detail::GJKSolver_libccd<S>>::DistanceRequest request;
+    costmap_3d::OcTreeMeshSolver<fcl::detail::GJKSolver_libccd<S>>::DistanceResult result;
     request.rel_err = 0.0;
-    request.enable_nearest_points = true;
     request.enable_signed_distance = true;
-    result.min_distance = std::numeric_limits<S>::max();
+    request.roi = roi;
     start_time = std::chrono::high_resolution_clock::now();
     octree_solver.distance(
-        tree_ptr.get(),
+        octree.get(),
         m1.get(),
         tf1,
         tf2,

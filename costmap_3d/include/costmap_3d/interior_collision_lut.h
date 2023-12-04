@@ -72,7 +72,7 @@ public:
 
   S distance(
       const fcl::Box<S>& box,
-      const fcl::Transform3<S>& box_tf,
+      const fcl::Vector3<S>& box_center,
       const fcl::Transform3<S>& mesh_tf,
       const fcl::Transform3<S>& inverse_mesh_tf,
       int* mesh_triangle_id_ptr = nullptr);
@@ -142,14 +142,11 @@ void InteriorCollisionLUT<S>::setup(
 
   FCLSolver solver;
   OcTreeMeshSolver<FCLSolver> octree_solver(&solver);
-  fcl::DistanceRequest<S> request;
-  request.enable_nearest_points = true;
 
-  std::shared_ptr<octomap::OcTree> singleton_map(new octomap::OcTree(box_size));
+  Costmap3D singleton_map(box_size);
   octomap::point3d box_center(box_size/2.0, box_size/2.0, box_size/2.0);
-  singleton_map->updateNode(box_center, true);
+  singleton_map.updateNode(box_center, true);
   fcl::Transform3<S> tf = fcl::Transform3<S>::Identity();
-  fcl::OcTree<S> fcl_singleton_map(singleton_map);
   pcl::PointCloud<pcl::PointXYZ> singleton_cloud;
   singleton_cloud.resize(1);
   singleton_cloud.is_dense = true;
@@ -178,16 +175,16 @@ void InteriorCollisionLUT<S>::setup(
         {
           // This is an interior point
           // Now find the closest triangle ...
-          fcl::DistanceResult<S> result;
+          typename OcTreeMeshSolver<FCLSolver>::DistanceRequest request;
+          typename OcTreeMeshSolver<FCLSolver>::DistanceResult result;
           octree_solver.distance(
-              &fcl_singleton_map,
+              &singleton_map,
               &mesh,
               tf,
               fcl::Transform3<S>::Identity(),
               request,
               &result);
-          // Save the mesh triangle index in the robot model
-          triangle_id = result.b2;
+          triangle_id = result.mesh_triangle_id;
         }
         lut_[lutIndex(grid_pt)] = triangle_id;
       }
@@ -198,12 +195,12 @@ void InteriorCollisionLUT<S>::setup(
 template <typename S>
 S InteriorCollisionLUT<S>::distance(
     const fcl::Box<S>& box,
-    const fcl::Transform3<S>& box_tf,
+    const fcl::Vector3<S>& box_center,
     const fcl::Transform3<S>& mesh_tf,
     const fcl::Transform3<S>& inverse_mesh_tf,
     int* mesh_triangle_id_ptr)
 {
-  GridPoint grid_pt = meshToGrid(inverse_mesh_tf * box_tf.translation());
+  GridPoint grid_pt = meshToGrid(inverse_mesh_tf * box_center);
   if (gridPointInBounds(grid_pt))
   {
     int mesh_triangle_id = lut_[lutIndex(grid_pt)];
@@ -215,7 +212,7 @@ S InteriorCollisionLUT<S>::distance(
       }
       fcl::Halfspace<S> halfspace(fcl::transform(
               (*halfspaces_)[mesh_triangle_id], mesh_tf));
-      return boxHalfspaceSignedDistance<S>(box, box_tf, halfspace);
+      return boxHalfspaceSignedDistance<S>(box, box_center, halfspace);
     }
   }
   return 0.0;

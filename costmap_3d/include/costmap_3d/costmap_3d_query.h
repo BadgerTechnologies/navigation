@@ -59,6 +59,7 @@
 #include <costmap_3d_msgs/GetPlanCost3DService.h>
 #include <costmap_3d/fcl_helper.h>
 #include <costmap_3d/interior_collision_lut.h>
+#include <costmap_3d/octree_solver.h>
 
 namespace costmap_3d
 {
@@ -439,7 +440,7 @@ private:
   void checkInteriorCollisionLUT();
   FCLFloat boxHalfspaceSignedDistance(
       const fcl::Box<FCLFloat>& box,
-      const fcl::Transform3<FCLFloat>& box_tf,
+      const fcl::Vector3<FCLFloat>& box_center,
       int mesh_triangle_id,
       const fcl::Transform3<FCLFloat>& mesh_tf) const;
 
@@ -590,12 +591,11 @@ private:
   class DistanceCacheEntry
   {
   public:
-    DistanceCacheEntry() {}
+    DistanceCacheEntry() { clear(); }
     DistanceCacheEntry(const DistanceCacheEntry& rhs)
         : distance(rhs.distance),
           octomap_box(rhs.octomap_box),
-          octomap_box_tf(rhs.octomap_box_tf),
-          mesh_triangle(rhs.mesh_triangle),
+          octomap_box_center(rhs.octomap_box_center),
           mesh_triangle_id(rhs.mesh_triangle_id)
     {
     }
@@ -603,42 +603,34 @@ private:
     {
       distance = rhs.distance;
       octomap_box = rhs.octomap_box;
-      octomap_box_tf = rhs.octomap_box_tf;
-      mesh_triangle = rhs.mesh_triangle;
+      octomap_box_center = rhs.octomap_box_center;
       mesh_triangle_id = rhs.mesh_triangle_id;
       return *this;
     }
-    DistanceCacheEntry(const fcl::DistanceResult<FCLFloat>& result)
+    DistanceCacheEntry(const OcTreeMeshSolver<FCLSolver>::DistanceResult& result)
+        : distance(result.min_distance),
+          octomap_box(result.octomap_box),
+          octomap_box_center(result.octomap_box_center),
+          mesh_triangle_id(result.mesh_triangle_id)
     {
-      assert(result.primitive1);
-      assert(result.primitive2);
-      distance = result.min_distance;
-      octomap_box = std::dynamic_pointer_cast<fcl::Box<FCLFloat>>(result.primitive1);
-      octomap_box_tf = result.tf1;
-      mesh_triangle = std::dynamic_pointer_cast<fcl::TriangleP<FCLFloat>>(result.primitive2);
-      mesh_triangle_id = result.b2;
-      assert(octomap_box);
-      assert(mesh_triangle);
     }
-    void setupResult(fcl::DistanceResult<FCLFloat>* result)
+    void setupResult(OcTreeMeshSolver<FCLSolver>::DistanceResult* result)
     {
-      result->primitive1 = octomap_box;
-      result->primitive2 = mesh_triangle;
-      result->tf1 = octomap_box_tf;
-      result->b2 = mesh_triangle_id;
+      result->octomap_box = octomap_box;
+      result->octomap_box_center = octomap_box_center;
+      result->mesh_triangle_id = mesh_triangle_id;
     }
     void clear()
     {
-      octomap_box.reset();
-      mesh_triangle.reset();
+      mesh_triangle_id = -1;
     }
     explicit operator bool() const
     {
-      return octomap_box && mesh_triangle;
+      return mesh_triangle_id >= 0;
     }
-    bool getCostmapIndexAndDepth(const octomap::OcTreeSpace& octree_space, Costmap3DIndex* index, unsigned int* depth)
+    bool getCostmapIndexAndDepth(const octomap::OcTreeSpace& octree_space, Costmap3DIndex* index, unsigned int* depth) const
     {
-      if (octomap_box)
+      if (*this)
       {
         // Use the size and location of the box to derive the correct octree key
         // (cell index) and depth.
@@ -652,8 +644,8 @@ private:
         // it for every main distance cache entry, which is small. Therefore
         // a standard C++ implementation was chosen.
         unsigned int d = static_cast<unsigned int>(std::round(std::log2(
-                    octree_space.getNodeSize(0) / octomap_box->side[0])));
-        const auto& box_center = octomap_box_tf.translation();
+                    octree_space.getNodeSize(0) / octomap_box.side[0])));
+        const auto& box_center = octomap_box_center;
         // Be sure to adjust the key based on the depth.
         *index = octree_space.coordToKey(box_center[0], box_center[1], box_center[2], d);
         *depth = d;
@@ -662,9 +654,8 @@ private:
       return false;
     }
     FCLFloat distance;
-    std::shared_ptr<fcl::Box<FCLFloat>> octomap_box;
-    fcl::Transform3<FCLFloat> octomap_box_tf;
-    std::shared_ptr<fcl::TriangleP<FCLFloat>> mesh_triangle;
+    fcl::Box<FCLFloat> octomap_box;
+    fcl::Vector3<FCLFloat> octomap_box_center;
     int mesh_triangle_id;
   };
   // Internal class to decompose a region of interest into a set of halfspaces.
@@ -725,12 +716,12 @@ private:
     // considered "inside".
     bool distanceCacheEntryInside(const DistanceCacheEntry& cache_entry)
     {
-      const auto& box = *(cache_entry.octomap_box);
-      const auto& box_tf = cache_entry.octomap_box_tf;
+      const auto& box = cache_entry.octomap_box;
+      const auto& box_center = cache_entry.octomap_box_center;
 
       for (unsigned int i = 0; i < rois_size_; ++i)
       {
-        if (costmap_3d::boxHalfspaceSignedDistance<FCLFloat>(box, box_tf, rois_[i]) > 0)
+        if (costmap_3d::boxHalfspaceSignedDistance<FCLFloat>(box, box_center, rois_[i]) > 0)
         {
           return false;
         }
@@ -738,13 +729,13 @@ private:
       // In or on each halfspace
       return true;
     }
-    // Apply this region to the FCL octree by copying the halfspaces into the
-    // FCL octree class.
-    void setupFCLOctree(fcl::OcTree<FCLFloat>* fcl_octree_ptr) const
+    // Apply this region to the DistanceRequest.
+    void setupRequest(OcTreeMeshSolver<FCLSolver>::DistanceRequest* request) const
     {
+      request->roi.reserve(rois_size_);
       for (unsigned int i = 0; i < rois_size_; ++i)
       {
-        fcl_octree_ptr->addToRegionOfInterest(rois_[i]);
+        request->roi.push_back(rois_[i]);
       }
     }
   private:
@@ -857,9 +848,9 @@ private:
   std::atomic<uint64_t> exact_hits_since_clear_us_;
   std::atomic<uint64_t> reuse_results_since_clear_us_;
   std::atomic<size_t> hit_fcl_bv_distance_calculations_;
-  std::atomic<size_t> hit_fcl_primative_distance_calculations_;
+  std::atomic<size_t> hit_fcl_primitive_distance_calculations_;
   std::atomic<size_t> miss_fcl_bv_distance_calculations_;
-  std::atomic<size_t> miss_fcl_primative_distance_calculations_;
+  std::atomic<size_t> miss_fcl_primitive_distance_calculations_;
 };
 
 using Costmap3DQueryPtr = std::shared_ptr<Costmap3DQuery>;

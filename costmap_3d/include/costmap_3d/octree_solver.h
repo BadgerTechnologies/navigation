@@ -37,17 +37,16 @@
 #ifndef COSTMAP_3D_COSTMAP_MESH_DISTANCE_H
 #define COSTMAP_3D_COSTMAP_MESH_DISTANCE_H
 
+#include <cmath>
 #include <vector>
 #include <limits>
 #include <functional>
 
-#include <fcl/math/bv/utility.h>
-#include <fcl/geometry/octree/octree.h>
+//#include <fcl/math/bv/utility.h>
 #include <fcl/geometry/bvh/BVH_model.h>
-#include <fcl/geometry/shape/utility.h>
+//#include <fcl/geometry/shape/utility.h>
 #include <fcl/geometry/shape/box.h>
-#include <fcl/narrowphase/distance_request.h>
-#include <fcl/narrowphase/distance_result.h>
+#include <octomap/octomap.h>
 
 namespace costmap_3d
 {
@@ -79,12 +78,12 @@ public:
   //
   // The box_to_mesh_tf must put the box into the *mesh* frame.
   using InteriorCollisionFunction = std::function<S(const fcl::Box<S>& box,
-                                                    const fcl::Transform3<S>& box_tf,
+                                                    const fcl::Vector3<S>& box_center,
                                                     const fcl::Transform3<S>& mesh_tf,
                                                     const fcl::Transform3<S>& inverse_mesh_tf,
-                                                    int* mesh_trinagle_id_ptr)>;
+                                                    int* mesh_triangle_id_ptr)>;
   using SignedDistanceFunction = std::function<S(const fcl::Box<S>& box,
-                                                 const fcl::Transform3<S>& box_tf,
+                                                 const fcl::Vector3<S>& box_center,
                                                  int mesh_triangle_id,
                                                  const fcl::Transform3<S>& mesh_tf)>;
 
@@ -115,30 +114,68 @@ public:
   {
   }
 
-  /** Distance between fcl OcTree and fcl BVHModel (mesh)
+  struct DistanceRequest
+  {
+    // Compute accurate penetration depth of first collision found
+    bool enable_signed_distance = false;
+
+    // Compute accurate penetration depth of deepest collision (only works
+    // properly if enable_signed_distance is also set).
+    bool enable_exact_signed_distance = false;
+
+    // relative error, between 0 and 1
+    S rel_err = 0.0;
+
+    // Only consider octomap nodes inside all of the set of halfspaces.
+    // If empty, this does nothing (the region is assumed to be the universe).
+    std::vector<fcl::Halfspace<S>> roi;
+  };
+
+  struct DistanceResult
+  {
+    // The distance query will be pruned by the initial min_distance speeding up
+    // the query. This is very useful if an upper bound is already known on the
+    // distance. Otherwise this distance will be set if the distance query found
+    // an answer.
+    S min_distance = std::numeric_limits<S>::infinity();
+
+    // If set to non-null, write the nearest points corresponding to the found
+    // distance. This must point to an array of at least two fcl::Vector3<S>. If
+    // there is a collision, this may return a collision point or some point
+    // inside the colliding volume which are not necessarily the furthest or
+    // closest points.
+    fcl::Vector3<S>* nearest_points = nullptr;
+
+    // Box geometry of the octomap box which resulted in min_distance.
+    fcl::Box<S> octomap_box;
+    fcl::Vector3<S> octomap_box_center;
+
+    // The mesh triangle id of the triangle which resulted in min_distance. If
+    // min_distance is not found, this will always be -1 which may be reliably
+    // used to determine if a distance was found or not.
+    int mesh_triangle_id = -1;
+
+    // The number of octomap box to mesh triangle calculations performed during
+    // this distance computation.
+    size_t primitive_distance_calculations = 0;
+
+    // The number of octomap bounding volume to mesh bounding volume calculations
+    // performed during this distance computation.
+    size_t bv_distance_calculations = 0;
+  };
+
+  /** Distance between a octomap::OcTree and fcl BVHModel (mesh)
    *
-   * Note: request and result must not be shared between threads.
+   * Note: this method is NOT thread safe and modifies the solver state for
+   * efficiency reasons. To run multiple parallel queries, simply instantiate
+   * multiple solvers.
    */
-  void distance(const fcl::OcTree<S>* tree1,
+  void distance(const octomap::OcTree* tree1,
                 const fcl::BVHModel<BV>* tree2,
                 const fcl::Transform3<S>& tf1,
                 const fcl::Transform3<S>& tf2,
-                const fcl::DistanceRequest<S>& request,
-                fcl::DistanceResult<S>* result);
-
-  /** Put the solver in uncertain only mode.
-   *
-   * In uncertain only mode, only uncertain obstacles are considered, and not
-   * free or occupied.
-   */
-  void setUncertainOnly(bool uncertain_only) { uncertain_only_ = uncertain_only; }
-
-  /** Put the solver in exact signed distance mode.
-   *
-   * In exact signed distance mode, the tree search is not stopped on the first
-   * collision, but searched to exhaustion.
-   */
-  void setExactSignedDistance(bool exact_signed_distance) { exact_signed_distance_ = exact_signed_distance; }
+                const DistanceRequest& request,
+                DistanceResult* result);
 
 private:
   const NarrowPhaseSolver* solver_;
@@ -146,11 +183,10 @@ private:
   SignedDistanceFunction signed_distance_function_;
   // Store many of the query options here to prevent having to put them on the
   // stack during recursion.
-  const fcl::OcTree<S>* octree_;
+  const octomap::OcTree* octree_;
   const std::vector<fcl::Halfspace<S>>* roi_;
   const fcl::BVHModel<BV>* mesh_;
-  const fcl::DistanceRequest<S>* drequest_ = nullptr;
-  fcl::DistanceResult<S>* dresult_ = nullptr;
+  DistanceResult* dresult_;
   fcl::Transform3<S> mesh_tf_;
   fcl::Transform3<S> mesh_tf_inverse_;
   const typename fcl::OcTree<S>::OcTreeNode* leaf_;
@@ -161,25 +197,10 @@ private:
   // one of them needs the inverse TF to put the octomap BV into the OBB
   // frame. It is much cheaper on average to pre-compute all the inverse TFs
   std::vector<fcl::Transform3<S>> world_to_obb_internal_tfs_;
-  double rel_err_factor_;
+  double rel_err_factor_ = 1.0;
   bool interior_collision_;
-  bool uncertain_only_ = false;
+  bool signed_distance_ = false;
   bool exact_signed_distance_ = false;
-
-  inline bool isNodeConsideredOccupied(
-      const fcl::OcTree<S>* tree,
-      const typename fcl::OcTree<S>::OcTreeNode* node) const
-  {
-    // For inner nodes, vanilla octrees track the max child value in the inner
-    // node. For uncertain only, we have to descend if the cost is lethal in case
-    // its hiding up a non-lethal.
-    // This could be fixed by extending the octrees we use to track both the
-    // min and max child values in inner nodes at the expense of having to track
-    // two data values in the tree.
-    return uncertain_only_ ?
-        (tree->nodeHasChildren(node) ? !tree->isNodeFree(node) : tree->isNodeUncertain(node)) :
-        tree->isNodeOccupied(node);
-  }
 
   template <bool check_roi>
   bool OcTreeMeshDistanceRecurse(const typename fcl::OcTree<S>::OcTreeNode* root1,
@@ -198,20 +219,19 @@ private:
 
 template <typename NarrowPhaseSolver>
 void OcTreeMeshSolver<NarrowPhaseSolver>::distance(
-    const fcl::OcTree<S>* tree1,
+    const octomap::OcTree* tree1,
     const fcl::BVHModel<BV>* tree2,
     const fcl::Transform3<S>& tf1,
     const fcl::Transform3<S>& tf2,
-    const fcl::DistanceRequest<S>& request,
-    fcl::DistanceResult<S>* result)
+    const OcTreeMeshSolver<NarrowPhaseSolver>::DistanceRequest& request,
+    OcTreeMeshSolver<NarrowPhaseSolver>::DistanceResult* result)
 {
   octree_ = tree1;
   mesh_ = tree2;
-  drequest_ = &request;
   dresult_ = result;
   mesh_tf_ = tf1.inverse() * tf2;
   mesh_tf_inverse_ = mesh_tf_.inverse();
-  rel_err_factor_ = std::max(std::min(1.0 - drequest_->rel_err, 1.0), 0.0);
+  rel_err_factor_ = std::max(std::min(1.0 - request.rel_err, 1.0), 0.0);
   interior_collision_ = false;
 
   world_to_obb_internal_tfs_.clear();
@@ -230,14 +250,16 @@ void OcTreeMeshSolver<NarrowPhaseSolver>::distance(
   // distances to unoccupied children nodes. Doing this check here prior to the
   // first recursion is a small optimization to avoid having to double-check in
   // each call.
-  if (!isNodeConsideredOccupied(tree1, tree1->getRoot()))
+  if (!octree_->isNodeOccupied(tree1->getRoot()))
     return;
 
-  const std::vector<fcl::Halfspace<S>>* roi = &tree1->getRegionOfInterest();
-  roi_ = &tree1->getRegionOfInterest();
-  fcl::AABB<S> root_bv(tree1->getRootBV());
-  if (roi_ == nullptr)
+  // Construct the root BV for the tree.
+  S delta = octree_->getNodeSize(1);
+  fcl::AABB<S> root_bv(fcl::Vector3<S>(-delta, -delta, -delta), fcl::Vector3<S>(delta, delta, delta));
+
+  if (request.roi.size() == 0)
   {
+    roi_ = nullptr;
     OcTreeMeshDistanceRecurse<false>(
         tree1->getRoot(),
         &root_bv,
@@ -245,6 +267,7 @@ void OcTreeMeshSolver<NarrowPhaseSolver>::distance(
   }
   else
   {
+    roi_ = &request.roi;
     OcTreeMeshDistanceRecurse<true>(
         tree1->getRoot(),
         &root_bv,
@@ -448,7 +471,7 @@ inline int checkROI(const fcl::AABB<S>& bv1, const std::vector<fcl::Halfspace<S>
 template <typename NarrowPhaseSolver>
 bool OcTreeMeshSolver<NarrowPhaseSolver>::MeshDistanceRecurse(int root2)
 {
-  const fcl::OcTree<S>* tree1 = octree_;
+  const octomap::OcTree* tree1 = octree_;
   const typename fcl::OcTree<S>::OcTreeNode* root1 = leaf_;
   const fcl::AABB<S>& bv1 = *leaf_bv_;
   const fcl::Vector3<S>& bv1_center = leaf_bv_center_;
@@ -457,9 +480,10 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::MeshDistanceRecurse(int root2)
   const fcl::Transform3<S>& tf2 = mesh_tf_;
   if(tree2->getBV(root2).isLeaf())
   {
-    fcl::Box<S> box;
-    fcl::Transform3<S> box_tf;
-    fcl::constructBox(bv1, fcl::Transform3<S>::Identity(), box, box_tf);
+    fcl::Box<S> box(bv1.max_ - bv1.min_);
+    fcl::Transform3<S> box_tf = fcl::Transform3<S>::Identity();
+    fcl::Vector3<S> box_center = (bv1.max_ + bv1.min_) * 0.5;
+    box_tf.translation() = box_center;
 
     int primitive_id = tree2->getBV(root2).primitiveId();
     const fcl::Triangle& tri_id = tree2->tri_indices[primitive_id];
@@ -469,28 +493,35 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::MeshDistanceRecurse(int root2)
 
     S dist;
     fcl::Vector3<S> closest_p1, closest_p2;
-    solver_->shapeTriangleDistance(box, box_tf, p1, p2, p3, tf2, &dist, &closest_p1, &closest_p2);
-    dresult_->primative_distance_calculations++;
+    bool get_closest_points = (dresult_->nearest_points != nullptr);
+    solver_->shapeTriangleDistance(box, box_tf, p1, p2, p3, tf2, &dist,
+        get_closest_points ? &closest_p1 : nullptr,
+        get_closest_points ? &closest_p2 : nullptr);
+    dresult_->primitive_distance_calculations++;
 
-    if (dist < 0.0 && drequest_->enable_signed_distance && signed_distance_function_)
+    if (dist < 0.0 && signed_distance_ && signed_distance_function_)
     {
       dist = signed_distance_function_(
           box,
-          box_tf,
+          box_center,
           primitive_id,
           tf2);
     }
 
     if (dist < dresult_->min_distance)
     {
-      // only allocate dynamic memory in the case where a new min was found
-      std::shared_ptr<fcl::Box<S>> box_ptr(new fcl::Box<S>(box));
-      std::shared_ptr<fcl::TriangleP<S>> triangle(new fcl::TriangleP<S>(p1, p2, p3));
-      dresult_->update(dist, tree1, tree2, root1 - tree1->getRoot(), primitive_id,
-                      closest_p1, closest_p2, box_ptr, box_tf, triangle, tf2);
+      dresult_->min_distance = dist;
+      dresult_->octomap_box = box;
+      dresult_->octomap_box_center = box_center;
+      dresult_->mesh_triangle_id = primitive_id;
+      if (get_closest_points)
+      {
+        dresult_->nearest_points[0] = closest_p1;
+        dresult_->nearest_points[1] = closest_p2;
+      }
     }
 
-    return exact_signed_distance_ ? false : drequest_->isSatisfied(*dresult_);
+    return exact_signed_distance_ ? false : dist <= 0;
   }
   else
   {
@@ -534,7 +565,7 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::MeshDistanceStart(
     const fcl::AABB<S>& bv1,
     S bv1_radius)
 {
-  const fcl::OcTree<S>* tree1 = octree_;
+  const octomap::OcTree* tree1 = octree_;
   const fcl::BVHModel<BV>* tree2 = mesh_;
   // There is no way (that I can think of) to correctly direct the search to
   // avoid having to test each box that touches the bounding volume of the
@@ -579,13 +610,12 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::MeshDistanceStart(
   if (interior_collision_function_)
   {
     // There is an interior collision function and we are at the root of the BVH.
-    fcl::Box<S> box;
-    fcl::Transform3<S> box_tf;
-    fcl::constructBox(bv1, fcl::Transform3<S>::Identity(), box, box_tf);
+    fcl::Box<S> box(bv1.max_ - bv1.min_);
+    fcl::Vector3<S> box_center = (bv1.max_ + bv1.min_) * 0.5;
     int primitive_id;
     S collision_distance = interior_collision_function_(
         box,
-        box_tf,
+        box_center,
         mesh_tf_,
         mesh_tf_inverse_,
         &primitive_id);
@@ -593,17 +623,21 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::MeshDistanceStart(
     {
       // A known interior collision.
       interior_collision_ = true;
-      const fcl::Triangle& tri_id = tree2->tri_indices[primitive_id];
-      const fcl::Vector3<S>& p1 = tree2->vertices[tri_id[0]];
-      const fcl::Vector3<S>& p2 = tree2->vertices[tri_id[1]];
-      const fcl::Vector3<S>& p3 = tree2->vertices[tri_id[2]];
-      std::shared_ptr<fcl::Box<S>> box_ptr(new fcl::Box<S>(box));
-      std::shared_ptr<fcl::TriangleP<S>> triangle(new fcl::TriangleP<S>(p1, p2, p3));
-      // Closest point doesn't make much sense on an interior collision of two volumes.
-      // Just return the center point of the box.
-      dresult_->update(collision_distance, tree1, tree2, root1 - tree1->getRoot(), primitive_id,
-                       box_tf.translation(), box_tf.translation(),
-                       box_ptr, box_tf, triangle, mesh_tf_);
+      if (collision_distance < dresult_->min_distance)
+      {
+        dresult_->min_distance = collision_distance;
+        dresult_->octomap_box = box;
+        dresult_->octomap_box_center = box_center;
+        dresult_->mesh_triangle_id = primitive_id;
+        if (dresult_->nearest_points)
+        {
+          // The "nearest" point could be calculated by the interior collision
+          // function but is currently unimplemented. For now just return the
+          // center point of the box (which is one known collision point).
+          dresult_->nearest_points[0] = box_center;
+          dresult_->nearest_points[1] = box_center;
+        }
+      }
       // For exact signed distance, keep going and checking other colliding cells
       return !exact_signed_distance_;
     }
@@ -894,7 +928,7 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
     fcl::AABB<S>* bv1,
     S bv1_radius)
 {
-  const fcl::OcTree<S>* tree1 = octree_;
+  const octomap::OcTree* tree1 = octree_;
   unsigned int nchildren;
   const typename fcl::OcTree<S>::OcTreeNode* children[8];
   fcl::Vector3<S> child_mins[8], child_maxs[8];
@@ -910,7 +944,7 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
         if (tree1->nodeChildExists(root1, i))
         {
           const typename fcl::OcTree<S>::OcTreeNode* child = tree1->getNodeChild(root1, i);
-          if (isNodeConsideredOccupied(tree1, child))
+          if (tree1->isNodeOccupied(child))
           {
             children[nchildren] = child;
             computeChildMinMax(*bv1, i, child_mins[nchildren], child_maxs[nchildren]);

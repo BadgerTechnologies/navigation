@@ -73,7 +73,7 @@ inline fcl::Halfspace<S> convertTriangleToHalfspace(const fcl::TriangleP<S>& tri
 // the fixed frame.
 template <typename S>
 inline S boxHalfspaceSignedDistance(const fcl::Box<S>& box,
-                                    const fcl::Transform3<S>& box_tf,
+                                    const fcl::Vector3<S>& box_center,
                                     const fcl::Halfspace<S>& halfspace)
 {
   fcl::Vector3<S> normal = halfspace.n;
@@ -83,7 +83,7 @@ inline S boxHalfspaceSignedDistance(const fcl::Box<S>& box,
       normal[2] * box.side[2]);
   fcl::Vector3<S> n_dot_d_abs = n_dot_d_components.cwiseAbs();
   S box_extent = 0.5 * (n_dot_d_abs[0] + n_dot_d_abs[1] + n_dot_d_abs[2]);
-  S center_distance = halfspace.signedDistance(box_tf.translation());
+  S center_distance = halfspace.signedDistance(box_center);
   return center_distance - box_extent;
 }
 

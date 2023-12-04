@@ -455,9 +455,9 @@ void Costmap3DQuery::clearStatistics()
   exact_hits_since_clear_us_ = 0;
   reuse_results_since_clear_us_ = 0;
   hit_fcl_bv_distance_calculations_ = 0;
-  hit_fcl_primative_distance_calculations_ = 0;
+  hit_fcl_primitive_distance_calculations_ = 0;
   miss_fcl_bv_distance_calculations_ = 0;
-  miss_fcl_primative_distance_calculations_ = 0;
+  miss_fcl_primitive_distance_calculations_ = 0;
 }
 
 void Costmap3DQuery::printStatistics()
@@ -514,9 +514,9 @@ void Costmap3DQuery::printStatistics()
       "\n\texact hit usecs/query: " << (double)exact_hits_since_clear_us_ / exact_hits_since_clear_ <<
       "\n\treuse results usecs/query: " << (double)reuse_results_since_clear_us_ / reuse_results_since_clear_ <<
       "\n\tmiss FCL BV distance calculations: " << miss_fcl_bv_distance_calculations_ <<
-      "\n\tmiss FCL primative distance calculations: " << miss_fcl_primative_distance_calculations_ <<
+      "\n\tmiss FCL primitive distance calculations: " << miss_fcl_primitive_distance_calculations_ <<
       "\n\thit FCL BV distance calculations: " << hit_fcl_bv_distance_calculations_ <<
-      "\n\thit FCL primative distance calculations: " << hit_fcl_primative_distance_calculations_;
+      "\n\thit FCL primitive distance calculations: " << hit_fcl_primitive_distance_calculations_;
   // Leverage the fact that the print arguments are only run if the log is
   // enabled to make it simple to track if statistics tracking should be
   // enabled. There is no need to pay for the atomic operations for statistics
@@ -695,8 +695,8 @@ double Costmap3DQuery::handleDistanceInteriorCollisions(
   // Start with the interior collision check as it is very fast.
   // Find out if the center of the box is inside the given footprint volume mesh.
   distance = interior_collision_lut_.distance(
-      *cache_entry.octomap_box,
-      cache_entry.octomap_box_tf,
+      cache_entry.octomap_box,
+      cache_entry.octomap_box_center,
       pose_tf,
       pose_tf.inverse());
 
@@ -713,12 +713,15 @@ double Costmap3DQuery::handleDistanceInteriorCollisions(
   // Yet FCL internally does such checks all the time, so use the
   // internal mechanism for now.
   fcl::detail::GJKSolver_libccd<FCLFloat> solver;
+  fcl::Transform3<FCLFloat> box_tf = fcl::Transform3<FCLFloat>::Identity();
+  box_tf.translation() = cache_entry.octomap_box_center;
+  const fcl::Triangle& tri_id = robot_model_->tri_indices[cache_entry.mesh_triangle_id];
   solver.shapeTriangleDistance(
-      *cache_entry.octomap_box,
-      cache_entry.octomap_box_tf,
-      cache_entry.mesh_triangle->a,
-      cache_entry.mesh_triangle->b,
-      cache_entry.mesh_triangle->c,
+      cache_entry.octomap_box,
+      box_tf,
+      robot_model_->vertices[tri_id[0]],
+      robot_model_->vertices[tri_id[1]],
+      robot_model_->vertices[tri_id[2]],
       pose_tf,
       &distance);
 
@@ -726,8 +729,8 @@ double Costmap3DQuery::handleDistanceInteriorCollisions(
   if (distance < 0.0)
   {
     distance = boxHalfspaceSignedDistance(
-        *cache_entry.octomap_box,
-        cache_entry.octomap_box_tf,
+        cache_entry.octomap_box,
+        cache_entry.octomap_box_center,
         cache_entry.mesh_triangle_id,
         pose_tf);
   }
@@ -737,13 +740,13 @@ double Costmap3DQuery::handleDistanceInteriorCollisions(
 
 Costmap3DQuery::FCLFloat Costmap3DQuery::boxHalfspaceSignedDistance(
     const fcl::Box<FCLFloat>& box,
-    const fcl::Transform3<FCLFloat>& box_tf,
+    const fcl::Vector3<FCLFloat>& box_center,
     int mesh_triangle_id,
     const fcl::Transform3<FCLFloat>& mesh_tf) const
 {
   fcl::Halfspace<FCLFloat> halfspace(fcl::transform(
       (*robot_model_halfspaces_)[mesh_triangle_id], mesh_tf));
-  return costmap_3d::boxHalfspaceSignedDistance<FCLFloat>(box, box_tf, halfspace);
+  return costmap_3d::boxHalfspaceSignedDistance<FCLFloat>(box, box_center, halfspace);
 }
 
 double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
@@ -851,7 +854,7 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
   }
   assert(octree_to_query);
 
-  // FCL does not correctly handle an empty octomap.
+  // Handle and count empty queries specially.
   if (octree_to_query->size() == 0 || !octree_to_query->isNodeOccupied(octree_to_query->getRoot()))
   {
     if (track_statistics)
@@ -882,8 +885,7 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     }
   }
 
-  fcl::DistanceRequest<FCLFloat> request;
-  fcl::DistanceResult<FCLFloat> result;
+  typename OcTreeMeshSolver<FCLSolver>::DistanceResult result;
 
   // Setup the regions of interest corresponding to the query region.
   // This has to be done prior to checking the distance caches, so the cache entry
@@ -1037,10 +1039,6 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     }
   }
 
-  request.rel_err = opts.relative_error;
-  request.enable_nearest_points = true;
-  request.enable_signed_distance = true;
-
   result.min_distance = pose_distance;
 
   double distance;
@@ -1072,24 +1070,14 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
                   std::placeholders::_3,
                   std::placeholders::_4));
 
-    if (query_obstacles == NONLETHAL_ONLY)
-    {
-      octree_solver.setUncertainOnly(true);
-    }
-
-    if (opts.exact_signed_distance)
-    {
-      octree_solver.setExactSignedDistance(true);
-    }
-
-    fcl::OcTree<FCLFloat> fcl_octree(octree_to_query);
-    // Always setup the correct occupancy limits
-    fcl_octree.setFreeThres(octomap::probability(FREE));
-    fcl_octree.setOccupancyThres(octomap::probability(LETHAL));
-    rois.setupFCLOctree(&fcl_octree);
+    typename OcTreeMeshSolver<FCLSolver>::DistanceRequest request;
+    request.enable_signed_distance = true;
+    request.enable_exact_signed_distance = opts.exact_signed_distance;
+    request.rel_err = opts.relative_error;
+    rois.setupRequest(&request);
 
     octree_solver.distance(
-        &fcl_octree,
+        octree_to_query.get(),
         robot_model_.get(),
         fcl::Transform3<FCLFloat>::Identity(),
         poseToFCLTransform<FCLFloat>(pose),
@@ -1103,7 +1091,7 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
   // Or the query region may be set to something other than ALL and there are
   // no map entries in the queried region.
   // If we get no result primitives, do not add null pointers to the cache!
-  if (result.primitive1 && result.primitive2)
+  if (result.mesh_triangle_id >= 0)
   {
     DistanceCacheEntry new_entry(result);
     new_entry.distance = distance;
@@ -1135,8 +1123,7 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     // This should only happen if the query was restricted such that no octomap
     // cells were considered. One way this could happen is if the distance was
     // limited by the caller. If the next call is a reuse_past_result query, we
-    // must set the last cache to nullptr to prevent erroneously using some
-    // other result.
+    // must clear the last cache to prevent erroneously using some other result.
     // No need to lock TLS
     tls_last_cache_entries_[query_region][query_obstacles].clear();
   }
@@ -1150,7 +1137,7 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
           std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
           std::memory_order_relaxed);
       hit_fcl_bv_distance_calculations_.fetch_add(result.bv_distance_calculations);
-      hit_fcl_primative_distance_calculations_.fetch_add(result.primative_distance_calculations);
+      hit_fcl_primitive_distance_calculations_.fetch_add(result.primitive_distance_calculations);
     }
     else if (milli_hit)
     {
@@ -1159,7 +1146,7 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
           std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
           std::memory_order_relaxed);
       hit_fcl_bv_distance_calculations_.fetch_add(result.bv_distance_calculations);
-      hit_fcl_primative_distance_calculations_.fetch_add(result.primative_distance_calculations);
+      hit_fcl_primitive_distance_calculations_.fetch_add(result.primitive_distance_calculations);
     }
     else if (cache_hit)
     {
@@ -1168,7 +1155,7 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
           std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
           std::memory_order_relaxed);
       hit_fcl_bv_distance_calculations_.fetch_add(result.bv_distance_calculations);
-      hit_fcl_primative_distance_calculations_.fetch_add(result.primative_distance_calculations);
+      hit_fcl_primitive_distance_calculations_.fetch_add(result.primitive_distance_calculations);
     }
     else
     {
@@ -1176,7 +1163,7 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
           std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
           std::memory_order_relaxed);
       miss_fcl_bv_distance_calculations_.fetch_add(result.bv_distance_calculations);
-      miss_fcl_primative_distance_calculations_.fetch_add(result.primative_distance_calculations);
+      miss_fcl_primitive_distance_calculations_.fetch_add(result.primitive_distance_calculations);
     }
   }
 
