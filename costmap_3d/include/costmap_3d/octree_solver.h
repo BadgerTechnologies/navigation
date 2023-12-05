@@ -148,6 +148,10 @@ private:
   const fcl::DistanceRequest<S>* drequest_ = nullptr;
   fcl::DistanceResult<S>* dresult_ = nullptr;
   fcl::Transform3<S> mesh_tf_inverse_;
+  // For an average query, around a thousand OBB comparisons happen, and each
+  // one of them needs the inverse TF to put the octomap BV into the OBB
+  // frame. It is much cheaper on average to pre-compute all the inverse TFs
+  std::vector<fcl::Transform3<S>> world_to_obb_internal_tfs_;
   double rel_err_factor_;
   bool interior_collision_;
   bool uncertain_only_ = false;
@@ -218,6 +222,17 @@ void OcTreeMeshSolver<NarrowPhaseSolver>::distance(
   rel_err_factor_ = 1.0 - drequest_->rel_err;
   interior_collision_ = false;
 
+  world_to_obb_internal_tfs_.clear();
+  world_to_obb_internal_tfs_.reserve(tree2->getNumBVs());
+  for (unsigned int i = 0; i < tree2->getNumBVs(); ++i)
+  {
+    const fcl::OBB<S>& obb = tree2->getBV(i).bv.obb;
+    fcl::Transform3<S> obb_internal_tf;
+    obb_internal_tf.linear() = obb.axis;
+    obb_internal_tf.translation() = obb.To;
+    world_to_obb_internal_tfs_.push_back((mesh_tf * obb_internal_tf).inverse());
+  }
+
   // Skip if the entire tree is not occupied, as the occupied check is carried
   // out prior to descending the tree. This is done to skip having to check
   // distances to unoccupied children nodes. Doing this check here prior to the
@@ -239,23 +254,20 @@ void OcTreeMeshSolver<NarrowPhaseSolver>::distance(
 template <typename S>
 inline double sphereOBBSignedDistance(
     S radius,
-    const fcl::Transform3<S>& sphere_tf,
+    const fcl::Vector3<S>& sphere_center,
     const fcl::OBB<S>& obb,
-    const fcl::Transform3<S>& obb_tf)
+    const fcl::Transform3<S>& world_to_obb_internal_tf)
 {
   // Find the sphere center in the obb's frame.
-  fcl::Transform3<S> obb_internal_tf;
-  obb_internal_tf.linear() = obb.axis;
-  obb_internal_tf.translation() = obb.To;
-  const fcl::Transform3<S> obb_to_sphere_tf = (obb_tf * obb_internal_tf).inverse() * sphere_tf;
+  const fcl::Vector3<S> sphere_center_in_obb = (world_to_obb_internal_tf * sphere_center);
   // Simplify the problem by leveraging the symmetry of the problem. The
   // distance is the same for any point as its projection into the first octant
   // (removing the sign).
-  const fcl::Vector3<S> abs_sphere_center = obb_to_sphere_tf.translation().cwiseAbs();
+  const fcl::Vector3<S> abs_sphere_center = sphere_center_in_obb.cwiseAbs();
 
   // Translate the problem so the corner of the (now axis-aligned) obb is at
   // the origin.
-  fcl::Vector3<S> sphere_center_shifted = abs_sphere_center - obb.extent;
+  const fcl::Vector3<S> sphere_center_shifted = abs_sphere_center - obb.extent;
 
   bool x_negative = std::signbit(sphere_center_shifted(0));
   bool y_negative = std::signbit(sphere_center_shifted(1));
@@ -302,17 +314,14 @@ template <typename S>
 inline S distanceOctomapOBB(
     S radius,
     const fcl::Vector3<S>& bv1_center,
-    const fcl::OBB<S>& bv2,
-    const fcl::Transform3<S>& tf2)
+    const fcl::OBB<S>& obb,
+    const fcl::Transform3<S>& world_to_obb_internal_tf)
 {
-  fcl::Transform3<S> sphere_tf(fcl::Transform3<S>::Identity());
-  sphere_tf.translation() = bv1_center;
-
   return sphereOBBSignedDistance(
     radius,
-    sphere_tf,
-    bv2,
-    tf2);
+    bv1_center,
+    obb,
+    world_to_obb_internal_tf);
 }
 
 template <typename S>
@@ -361,7 +370,7 @@ inline S distanceOctomapOBBRSS(
     S radius,
     const fcl::Vector3<S>& bv1_center,
     const fcl::OBBRSS<S>& bv2,
-    const fcl::Transform3<S>& tf2)
+    const fcl::Transform3<S>& world_to_bv2_internal_tf)
 {
   // For most meshes, the OBB will be a better fit than the RSS and will result
   // in fewer collisions. This is because most meshes will be angular and boxy.
@@ -374,7 +383,7 @@ inline S distanceOctomapOBBRSS(
       radius,
       bv1_center,
       bv2.obb,
-      tf2);
+      world_to_bv2_internal_tf);
 }
 
 // return -1 if bv1 out of roi, 1 if in, and 0 if on.
@@ -476,8 +485,8 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::MeshDistanceRecurse(
       &tree2->getBV(children[0]).bv,
       &tree2->getBV(children[1]).bv};
     S d[2] = {
-      distanceOctomapOBBRSS(bv1_radius, bv1_center, *bv2[0], tf2),
-      distanceOctomapOBBRSS(bv1_radius, bv1_center, *bv2[1], tf2)};
+      distanceOctomapOBBRSS(bv1_radius, bv1_center, *bv2[0], world_to_obb_internal_tfs_[children[0]]),
+      distanceOctomapOBBRSS(bv1_radius, bv1_center, *bv2[1], world_to_obb_internal_tfs_[children[1]])};
     dresult_->bv_distance_calculations+=2;
     // Go left first if it is closer, otherwise go right first
     bool go_left = (d[0] < d[1]);
@@ -902,7 +911,7 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
         {
           children[nchildren] = child;
           computeChildBV(bv1, i, child_bvs[nchildren]);
-          distances[nchildren] = distanceOctomapOBBRSS(radius, child_bvs[nchildren].center(), bv2, tf2);
+          distances[nchildren] = distanceOctomapOBBRSS(radius, child_bvs[nchildren].center(), bv2, world_to_obb_internal_tfs_[root2]);
           nchildren++;
           dresult_->bv_distance_calculations++;
         }
