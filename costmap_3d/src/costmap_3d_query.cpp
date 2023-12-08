@@ -814,7 +814,7 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
   assert(octree_to_query);
 
   // FCL does not correctly handle an empty octomap.
-  if (octree_to_query->size() == 0)
+  if (octree_to_query->size() == 0 || !octree_to_query->isNodeOccupied(octree_to_query->getRoot()))
   {
     empties_since_clear_.fetch_add(1, std::memory_order_relaxed);
     return std::numeric_limits<double>::max();
