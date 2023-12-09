@@ -449,7 +449,18 @@ private:
   public:
     DistanceCacheKey(const geometry_msgs::Pose& pose, QueryRegion query_region, bool query_obstacles, int bins_per_meter, int bins_per_radian)
     {
-      binned_pose_ = binPose(pose, bins_per_meter, bins_per_radian);
+      // If bins_per_meter or bins_per_radian are zero, the cache is disabled.
+      // The key is allowed to be calculated anyway as an exact key (and this
+      // may simplify the caller in cases where it wants to setup a cache key
+      // even if the caches are disabled, then check later).
+      if (bins_per_meter > 0 && bins_per_radian > 0)
+      {
+        binned_pose_ = binPose(pose, bins_per_meter, bins_per_radian);
+      }
+      else
+      {
+        binned_pose_ = pose;
+      }
       query_region_ = query_region;
       query_obstacles_ = query_obstacles;
       hash_ = hash_value();
