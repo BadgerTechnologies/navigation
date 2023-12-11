@@ -105,7 +105,7 @@ class FakeOdomNode
 
       ros::NodeHandle private_nh("~");
       private_nh.param("odom_frame_id", odom_frame_id_, std::string("odom"));
-      private_nh.param("base_frame_id", base_frame_id_, std::string("base_link")); 
+      private_nh.param("base_frame_id", base_frame_id_, std::string("base_footprint"));
       private_nh.param("global_frame_id", global_frame_id_, std::string("map"));
       private_nh.param("delta_x", delta_x_, 0.0);
       private_nh.param("delta_y", delta_y_, 0.0);
@@ -120,7 +120,7 @@ class FakeOdomNode
       q.setRPY(0.0, 0.0, -delta_yaw_);
       m_offsetTf = tf2::Transform(q, tf2::Vector3(-delta_x_, -delta_y_, 0.0));
 
-      stuff_sub_ = nh.subscribe("base_pose_ground_truth", 100, &FakeOdomNode::stuffFilter, this);
+      stuff_sub_ = nh.subscribe("/odom", 100, &FakeOdomNode::stuffFilter, this);
       filter_sub_ = new message_filters::Subscriber<nav_msgs::Odometry>(nh, "", 100);
       filter_ = new tf2_ros::MessageFilter<nav_msgs::Odometry>(*filter_sub_, *m_tfBuffer, base_frame_id_, 100, nh);
       filter_->registerCallback(boost::bind(&FakeOdomNode::update, this, _1));
@@ -129,6 +129,7 @@ class FakeOdomNode
       m_initPoseSub = new message_filters::Subscriber<geometry_msgs::PoseWithCovarianceStamped>(nh, "initialpose", 1);
       m_initPoseFilter = new tf2_ros::MessageFilter<geometry_msgs::PoseWithCovarianceStamped>(*m_initPoseSub, *m_tfBuffer, global_frame_id_, 1, nh);
       m_initPoseFilter->registerCallback(boost::bind(&FakeOdomNode::initPoseReceived, this, _1));
+      ROS_INFO("Running fake localization.");
     }
 
     ~FakeOdomNode(void)
