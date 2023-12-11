@@ -505,6 +505,7 @@ void Costmap3DQuery::printStatistics()
       "\n\tqueries this cycle: " << queries_since_clear_ <<
       "\n\tcache misses: " << cache_misses <<
       "\n\tcache hits: " << hits_since_clear_ <<
+      "\n\tcache empties: " << empties_since_clear_ <<
       "\n\tempty query ratio: " << empty_ratio <<
       "\n\tcache hit ratio: " << hit_ratio <<
       "\n\tslow milli cache hits: " << slow_milli_hits_since_clear_ <<
@@ -797,19 +798,12 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     // Do not check if the entry is in the query region still, it is assumed
     // the caller wants to ignore the potential error this would cause, as this
     // interface is mainly useful for very small perturbations.
+    double distance;
     if (tls_last_cache_entries_[query_region][query_obstacles])
     {
-      double distance = handleDistanceInteriorCollisions(
+      distance = handleDistanceInteriorCollisions(
           tls_last_cache_entries_[query_region][query_obstacles],
           pose);
-      if (track_statistics)
-      {
-        reuse_results_since_clear_.fetch_add(1, std::memory_order_relaxed);
-        reuse_results_since_clear_us_.fetch_add(
-            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
-            std::memory_order_relaxed);
-      }
-      return distance;
     }
     else
     {
@@ -820,8 +814,16 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
       // This will be the exact same distance returned by the previous call,
       // which is the desired result when the previous query resulted in
       // nothing found.
-      return pose_distance;
+      distance = pose_distance;
     }
+    if (track_statistics)
+    {
+      reuse_results_since_clear_.fetch_add(1, std::memory_order_relaxed);
+      reuse_results_since_clear_us_.fetch_add(
+          std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
+          std::memory_order_relaxed);
+    }
+    return distance;
   }
 
   if (!robot_model_)
@@ -1173,7 +1175,13 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
 
   if (track_statistics)
   {
-    if (micro_hit)
+    if (result.mesh_triangle_id < 0)
+    {
+      // Count a query that found nothing as an empty (as it will run very fast
+      // and skew other results, as it would otherwise be counted as a miss.)
+      empties_since_clear_.fetch_add(1, std::memory_order_relaxed);
+    }
+    else if (micro_hit)
     {
       slow_micro_hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
       slow_micro_hits_since_clear_us_.fetch_add(
