@@ -217,6 +217,28 @@ public:
     bool reuse_past_result = false;
     //! Acceptable relative error limit (improves runtime)
     double relative_error = 0.05;
+    /**
+     * If set to true, a milli or micro cache hit that is above the cache
+     * threshold parameters set in the query will be directly used to calculate
+     * the distance. This can introduce an error up to the size of the
+     * resolution of the corresponding cache, and is set by default to speed up
+     * queries. Turn this off to get exact distance results when there are no
+     * collisions. Note: normal cache hits are never directly used.
+     */
+    bool directly_use_cache_when_above_threshold = true;
+    /**
+     * If set to true, a milli or micro cache hit that is at or below the cache
+     * threshold parameters set in the query will still be directly used to
+     * calculate the distance as long as the new pose is not in collision.
+     * Finding the collision distance is much faster than the true overall
+     * signed distance. If no collision is found, then the cache entry is used
+     * directly as if it had been above the threshold.  This can introduce a
+     * large relative error as some other costmap cell may be closer (within
+     * the resolution of the corresponding cache) and is therefore off by
+     * default.  Turn this on to get even faster queries at the expense of
+     * relative error when near a costmap voxel.
+     */
+    bool directly_use_cache_when_below_threshold = false;
     /** Limit search distance.
      * This is useful for very small limits (near zero) or very large limits.
      * For in-between values it can defeat the usefulness of all the caches

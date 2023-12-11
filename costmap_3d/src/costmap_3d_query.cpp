@@ -926,6 +926,7 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
         cache_entry,
         pose);
     if ((!opts.exact_signed_distance && distance <= 0.0) ||
+        opts.directly_use_cache_when_above_threshold &&
         std::isfinite(cache_entry.distance) && (
           cache_entry.distance > milli_cache_threshold_ ||
           distance > milli_cache_threshold_))
@@ -974,8 +975,9 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
         cache_entry,
         pose);
     if ((!opts.exact_signed_distance && distance <= 0.0) ||
-        cache_entry.distance > micro_cache_threshold_ ||
-        distance > micro_cache_threshold_)
+        opts.directly_use_cache_when_above_threshold && (
+          cache_entry.distance > micro_cache_threshold_ ||
+          distance > micro_cache_threshold_))
     {
       // Be sure to update the TLS last cache entry.
       // We do not need the write lock to update thread local storage.
@@ -1056,7 +1058,16 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     }
   }
 
-  result.min_distance = pose_distance;
+  if (opts.directly_use_cache_when_below_threshold && (micro_hit || milli_hit))
+  {
+    // When directly using the cache when below the threshold, just look for collisions.
+    result.min_distance = std::numeric_limits<FCLFloat>::min();
+  }
+  else
+  {
+    // limit search to nearest cache entry
+    result.min_distance = pose_distance;
+  }
 
   double distance;
 
@@ -1101,7 +1112,19 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
         request,
         &result);
   }
-  distance = result.min_distance;
+
+  if (opts.directly_use_cache_when_below_threshold && (micro_hit || milli_hit))
+  {
+    // If there was no collision, use the closest cache entry as the distance.
+    if (result.min_distance > 0.0)
+    {
+      distance = pose_distance;
+    }
+  }
+  else
+  {
+    distance = result.min_distance;
+  }
 
   // Note that it is possible for the result to be empty. The octomap might
   // only contain non-lethal leaves and we may have missed every cache.
