@@ -877,6 +877,7 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     {
       empties_since_clear_.fetch_add(1, std::memory_order_relaxed);
     }
+    tls_last_cache_entries_[query_region][query_obstacles].clear();
     return std::numeric_limits<double>::max();
   }
 
