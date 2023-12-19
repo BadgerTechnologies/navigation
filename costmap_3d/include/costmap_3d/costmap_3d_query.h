@@ -511,11 +511,12 @@ private:
              query_region_ == rhs.query_region_ &&
              query_obstacles_ == rhs.query_obstacles_;
     }
+    QueryObstacles getQueryObstacles() const { return query_obstacles_; }
 
   protected:
     geometry_msgs::Pose binned_pose_;
     QueryRegion query_region_;
-    bool query_obstacles_;
+    QueryObstacles query_obstacles_;
 
     size_t hash_value() const
     {

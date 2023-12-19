@@ -348,13 +348,27 @@ void Costmap3DQuery::checkCostmap(std::shared_ptr<const octomap::OcTree> new_oct
         bool erase = true;
         Costmap3DIndex index;
         unsigned int depth;
-        if (it->second.getCostmapIndexAndDepth(*octree_ptr_, &index, &depth))
+        const octomap::OcTree* octree_to_query;
+        if (it->first.getQueryObstacles() == NONLETHAL_ONLY)
         {
-          auto* node = octree_ptr_->search(index, depth);
-          if (node && !octree_ptr_->nodeHasChildren(node))
+          octree_to_query = nonlethal_octree_ptr_.get();
+        }
+        else
+        {
+          octree_to_query = octree_ptr_.get();
+        }
+        if (it->second.getCostmapIndexAndDepth(*octree_to_query, &index, &depth))
+        {
+          unsigned int found_depth;
+          auto* node = octree_to_query->search(index, depth, &found_depth);
+          if (node &&
+              !octree_to_query->nodeHasChildren(node) &&
+              depth == found_depth &&
+              octree_to_query->isNodeOccupied(node))
           {
-            // The node exists and has no children (so its a leaf and not an inner node)
-            // Keep this entry.
+            // The node exists and has no children (so its a leaf and not an
+            // inner node), is at the correct depth and is considered occupied
+            // for the proper octree. Keep this entry.
             erase = false;
           }
         }
@@ -384,13 +398,27 @@ void Costmap3DQuery::checkCostmap(std::shared_ptr<const octomap::OcTree> new_oct
         bool erase = true;
         Costmap3DIndex index;
         unsigned int depth;
-        if (it->second.getCostmapIndexAndDepth(*octree_ptr_, &index, &depth))
+        const octomap::OcTree* octree_to_query;
+        if (it->first.getQueryObstacles() == NONLETHAL_ONLY)
         {
-          auto* node = octree_ptr_->search(index, depth);
-          if (node && !octree_ptr_->nodeHasChildren(node))
+          octree_to_query = nonlethal_octree_ptr_.get();
+        }
+        else
+        {
+          octree_to_query = octree_ptr_.get();
+        }
+        if (it->second.getCostmapIndexAndDepth(*octree_to_query, &index, &depth))
+        {
+          unsigned int found_depth;
+          auto* node = octree_to_query->search(index, depth, &found_depth);
+          if (node &&
+              !octree_to_query->nodeHasChildren(node) &&
+              depth == found_depth &&
+              octree_to_query->isNodeOccupied(node))
           {
-            // The node exists and has no children (so its a leaf and not an inner node)
-            // Keep this entry.
+            // The node exists and has no children (so its a leaf and not an
+            // inner node), is at the correct depth and is considered occupied
+            // for the proper octree. Keep this entry.
             erase = false;
           }
         }
