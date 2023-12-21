@@ -157,15 +157,9 @@ public:
    * be to approximate the motion necessary to avoid the penetrating obstacle.
    * For query objects which track the master layered costmap,
    * the caller must be holding the lock on the associated costmap.
-   *
-   * reuse_past_result can be used to force a subsequent query re-use a
-   * past result at a new pose. Setting this to true will prevent the query
-   * from attempting to find a better answer, so use with care, only when
-   * altering the pose by a small amount.
    */
   virtual double footprintDistance(const geometry_msgs::Pose& pose,
                                    QueryRegion query_region = ALL,
-                                   bool reuse_past_result = false,
                                    double relative_error = 0.05);
 
   /** @brief Return minimum signed distance to nearest costmap object.
@@ -187,15 +181,9 @@ public:
    * rarely necessary.
    * For query objects which track the master layered costmap,
    * the caller must be holding the lock on the associated costmap.
-   *
-   * reuse_past_result can be used to force a subsequent query re-use a
-   * past result at a new pose. Setting this to true will prevent the query
-   * from attempting to find a better answer, so use with care, only when
-   * altering the pose by a small amount.
    */
   virtual double footprintSignedDistance(const geometry_msgs::Pose& pose,
                                          QueryRegion query_region = ALL,
-                                         bool reuse_past_result = false,
                                          double relative_error = 0.05,
                                          bool exact_signed_distance = false);
 
@@ -213,8 +201,6 @@ public:
      * penetration depth is not returned). Only effective if signed_distance is true
      */
     bool exact_signed_distance = false;
-    //! Whether to reuse the previous box/mesh triangle result directly
-    bool reuse_past_result = false;
     //! Acceptable relative error limit (improves runtime)
     double relative_error = 0.05;
     /**
@@ -247,8 +233,28 @@ public:
     FCLFloat distance_limit = std::numeric_limits<FCLFloat>::max();
   };
 
+  class DistanceResult
+  {
+  public:
+    DistanceResult() { clear(); }
+    void clear()
+    {
+      mesh_triangle_id = -1;
+    }
+    explicit operator bool() const
+    {
+      return mesh_triangle_id >= 0;
+    }
+    fcl::Box<FCLFloat> octomap_box;
+    fcl::Vector3<FCLFloat> octomap_box_center;
+    int mesh_triangle_id;
+  };
+
   /** @brief Alternate footprintDistance interface taking a DistanceOptions */
-  virtual double footprintDistance(const geometry_msgs::Pose& pose, const DistanceOptions& opts);
+  virtual double footprintDistance(const geometry_msgs::Pose& pose, const DistanceOptions& opts, DistanceResult* result = nullptr);
+
+  /** @brief Recalculate footprintDistance with a previous result at a new pose. */
+  virtual double footprintDistance(const geometry_msgs::Pose& pose, const DistanceResult& result);
 
   /** @brief get a const reference to the padded robot mesh points being used */
   const pcl::PointCloud<pcl::PointXYZ>& getRobotMeshPoints() const {return *robot_mesh_points_;}
@@ -359,16 +365,6 @@ protected:
    */
   virtual bool needCheckCostmap(std::shared_ptr<const octomap::OcTree> new_octree = nullptr);
 
-  /** @brief Check and invalidate TLS if necessary.
-   *
-   * Because checkCostmap will only invalidate instance-wide state, TLS state
-   * must be checked on every query prior to using the TLS cache to see if it
-   * is still valid. This is because the thread checkCostmap ends up
-   * invalidating instance-wide state runs on can not see the TLS of other
-   * threads (by design) Checking TLS state is lockless so this is cheap.
-   */
-  virtual void checkTLS();
-
   /** @brief Update the mesh to use for queries.
    *
    * Note: for a buffered query it is necessary to ensure that this method is
@@ -382,7 +378,8 @@ protected:
 
   /** @brief core of distance calculations */
   virtual double calculateDistance(const geometry_msgs::Pose& pose,
-                                   const DistanceOptions& opts);
+                                   const DistanceOptions& opts,
+                                   DistanceResult* return_result = nullptr);
 
   /** @brief recalculate the distance cache thresholds.
    *
@@ -648,11 +645,26 @@ private:
           mesh_triangle_id(result.mesh_triangle_id)
     {
     }
+    DistanceCacheEntry(const DistanceResult& result)
+        : octomap_box(result.octomap_box),
+          octomap_box_center(result.octomap_box_center),
+          mesh_triangle_id(result.mesh_triangle_id)
+    {
+    }
     void setupResult(OcTreeMeshSolver<FCLSolver>::DistanceResult* result)
     {
       result->octomap_box = octomap_box;
       result->octomap_box_center = octomap_box_center;
       result->mesh_triangle_id = mesh_triangle_id;
+    }
+    void setupResult(DistanceResult* result)
+    {
+      if (result)
+      {
+        result->octomap_box = octomap_box;
+        result->octomap_box_center = octomap_box_center;
+        result->mesh_triangle_id = mesh_triangle_id;
+      }
     }
     void clear()
     {
@@ -788,12 +800,6 @@ private:
       const geometry_msgs::Pose& pose);
   using DistanceCache = std::unordered_map<DistanceCacheKey, DistanceCacheEntry, DistanceCacheKeyHash, DistanceCacheKeyEqual>;
   using ExactDistanceCache = std::unordered_map<DistanceCacheKey, DistanceCacheEntry, DistanceCacheKeyHash, DistanceCacheKeyEqual>;
-  // Keep track of last update in this thread to correctly reset any thread
-  // local caches
-  static thread_local unsigned int tls_last_layered_costmap_update_number_;
-  static thread_local Costmap3DQuery* tls_last_instance_;
-  /// Indexed by QueryRegion
-  static thread_local DistanceCacheEntry tls_last_cache_entries_[MAX][OBSTACLES_MAX];
   /**
    * The distance cache allows us to find a very good distance guess quickly.
    * The cache memorizes to a hash table for a pose rounded to the number of
@@ -805,6 +811,8 @@ private:
    */
   DistanceCache distance_cache_;
   shared_mutex distance_cache_mutex_;
+  // Last entries are useful for setting good bounds on misses.
+  DistanceCacheEntry last_distance_cache_entries_[MAX][OBSTACLES_MAX];
   /**
    * Whether the caller wants 2D mode for distance cache thresholds.
    * When in 2D mode, the cache thresholds can be tighter and are calculated
@@ -872,7 +880,6 @@ private:
   std::atomic<unsigned int> fast_micro_hits_since_clear_;
   std::atomic<unsigned int> slow_micro_hits_since_clear_;
   std::atomic<unsigned int> exact_hits_since_clear_;
-  std::atomic<unsigned int> reuse_results_since_clear_;
   std::atomic<uint64_t> misses_since_clear_us_;
   std::atomic<uint64_t> hits_since_clear_us_;
   std::atomic<uint64_t> fast_milli_hits_since_clear_us_;
@@ -880,7 +887,6 @@ private:
   std::atomic<uint64_t> fast_micro_hits_since_clear_us_;
   std::atomic<uint64_t> slow_micro_hits_since_clear_us_;
   std::atomic<uint64_t> exact_hits_since_clear_us_;
-  std::atomic<uint64_t> reuse_results_since_clear_us_;
   std::atomic<size_t> hit_fcl_bv_distance_calculations_;
   std::atomic<size_t> hit_fcl_primitive_distance_calculations_;
   std::atomic<size_t> miss_fcl_bv_distance_calculations_;
