@@ -1132,6 +1132,8 @@ void test_pose_binning_impl(int bins_per_meter, int bins_per_rotation)
   std::cout << "Average time to bin2 random pose: " <<
       std::chrono::duration_cast<std::chrono::nanoseconds>(bin_pose_time).count() / n <<
       "ns" << std::endl;
+
+  start_time = std::chrono::high_resolution_clock::now();
   for (unsigned i=0; i<n; ++i)
   {
     binned_poses[i] = binPoseLog(pose_arr[i], bins_per_meter, bins_per_rotation);
