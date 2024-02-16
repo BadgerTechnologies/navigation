@@ -412,7 +412,8 @@ void octree_solver_test(std::size_t n, bool negative_x_roi, bool non_negative_x_
     costmap_3d::OcTreeMeshSolver<fcl::detail::GJKSolver_libccd<S>>::DistanceResult result;
     request.rel_err = 0.0;
     request.enable_signed_distance = true;
-    request.roi = roi;
+    request.roi_ptr = roi.data();
+    request.roi_size = roi.size();
     start_time = std::chrono::high_resolution_clock::now();
     octree_solver.distance(
         octree.get(),

@@ -778,11 +778,8 @@ private:
     // Apply this region to the DistanceRequest.
     void setupRequest(OcTreeMeshSolver<FCLSolver>::DistanceRequest* request) const
     {
-      request->roi.reserve(rois_size_);
-      for (unsigned int i = 0; i < rois_size_; ++i)
-      {
-        request->roi.push_back(rois_[i]);
-      }
+      request->roi_ptr = rois_;
+      request->roi_size = rois_size_;
     }
   private:
     unsigned int rois_size_ = 0;

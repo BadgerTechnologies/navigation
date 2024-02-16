@@ -127,8 +127,10 @@ public:
     S rel_err = 0.0;
 
     // Only consider octomap nodes inside all of the set of halfspaces.
-    // If empty, this does nothing (the region is assumed to be the universe).
-    std::vector<fcl::Halfspace<S>> roi;
+    // If roi_ptr is nullptr or roi_size is zero, this does nothing (the region
+    // is assumed to be the universe).
+    const fcl::Halfspace<S>* roi_ptr = nullptr;
+    size_t roi_size = 0;
   };
 
   struct DistanceResult
@@ -184,7 +186,8 @@ private:
   // Store many of the query options here to prevent having to put them on the
   // stack during recursion.
   const octomap::OcTree* octree_;
-  const std::vector<fcl::Halfspace<S>>* roi_;
+  const fcl::Halfspace<S>* roi_ptr_;
+  size_t roi_size_;
   const fcl::BVHModel<BV>* mesh_;
   DistanceResult* dresult_;
   fcl::Transform3<S> mesh_tf_;
@@ -233,6 +236,7 @@ void OcTreeMeshSolver<NarrowPhaseSolver>::distance(
   mesh_tf_inverse_ = mesh_tf_.inverse();
   rel_err_factor_ = std::max(std::min(1.0 - request.rel_err, 1.0), 0.0);
   interior_collision_ = false;
+  roi_size_ = request.roi_size;
 
   world_to_obb_internal_tfs_.clear();
   world_to_obb_internal_tfs_.reserve(tree2->getNumBVs());
@@ -257,9 +261,9 @@ void OcTreeMeshSolver<NarrowPhaseSolver>::distance(
   S delta = octree_->getNodeSize(1);
   fcl::AABB<S> root_bv(fcl::Vector3<S>(-delta, -delta, -delta), fcl::Vector3<S>(delta, delta, delta));
 
-  if (request.roi.size() == 0)
+  if (roi_size_ == 0)
   {
-    roi_ = nullptr;
+    roi_ptr_ = nullptr;
     OcTreeMeshDistanceRecurse<false>(
         tree1->getRoot(),
         &root_bv,
@@ -267,7 +271,7 @@ void OcTreeMeshSolver<NarrowPhaseSolver>::distance(
   }
   else
   {
-    roi_ = &request.roi;
+    roi_ptr_ = request.roi_ptr;
     OcTreeMeshDistanceRecurse<true>(
         tree1->getRoot(),
         &root_bv,
@@ -429,20 +433,20 @@ static inline void computeChildMinMax(const fcl::AABB<S>& root_bv, unsigned int 
 
 // return -1 if bv1 out of roi, 1 if in, and 0 if on.
 template <typename S>
-inline int checkROI(const fcl::AABB<S>& bv1, const std::vector<fcl::Halfspace<S>>* roi)
+inline int checkROI(const fcl::AABB<S>& bv1, const fcl::Halfspace<S>* roi, size_t roi_size)
 {
   fcl::Vector3<S> bv1_center = bv1.center();
   fcl::Vector3<S> bv1_diag = bv1.max_ - bv1.min_;
   bool all_in = true;
 
-  for (unsigned int i=0; i<roi->size(); ++i)
+  for (unsigned int i=0; i<roi_size; ++i)
   {
     // This is performance critical code.
     // So do not call boxHalfSpaceSignedDistance, but repeat the work here, as
     // we do not want to spend the time to create a Box from an AABB.
     // Also, we know that the AABB is axis-aligned with the world frame and
     // skip rotating the halfspace normal into the boxes frame.
-    const fcl::Halfspace<S>& region((*roi)[i]);
+    const fcl::Halfspace<S>& region(roi[i]);
     fcl::Vector3<S> normal = region.n;
     fcl::Vector3<S> n_dot_d(normal[0] * bv1_diag[0], normal[1] * bv1_diag[1], normal[2] * bv1_diag[2]);
     fcl::Vector3<S> n_dot_d_abs = n_dot_d.cwiseAbs();
@@ -972,7 +976,7 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
   bool entirely_inside_roi;
   if (check_roi)
   {
-    int rv = checkROI<S>(*bv1, roi_);
+    int rv = checkROI<S>(*bv1, roi_ptr_, roi_size_);
     if (rv == -1)
     {
       // this octomap region is entirely out of the region of interest
