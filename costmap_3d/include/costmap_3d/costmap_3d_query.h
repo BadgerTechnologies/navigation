@@ -532,7 +532,7 @@ private:
           binned_pose_.position.z,
           {.uint = {static_cast<uint64_t>(query_region_) << 8 | static_cast<uint64_t>(query_obstacles_)}},
       };
-      uint32_t primes[8] = {
+      uint64_t primes[8] = {
           30011,
           30013,
           30029,
@@ -544,12 +544,12 @@ private:
       };
       // Make the hash SIMD friendly by using primes and addition instead of
       // hash_combine which must be done sequentially.
-      size_t rv = 0;
+      uint64_t rv = 0;
       for (unsigned i=0; i<8; ++i)
       {
         rv += u[i].uint * primes[i];
       }
-      return rv;
+      return static_cast<size_t>(rv);
     }
     // Bin a pose.
     inline geometry_msgs::Pose binPose(const geometry_msgs::Pose& pose,
