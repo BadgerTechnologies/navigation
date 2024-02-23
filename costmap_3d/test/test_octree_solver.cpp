@@ -38,6 +38,7 @@
 
 #include <algorithm>
 #include <array>
+#include <functional>
 #include <random>
 #include <vector>
 
@@ -810,6 +811,7 @@ inline geometry_msgs::Pose binPose2(const geometry_msgs::Pose& pose,
   return rv;
 }
 
+template <bool cube_stretch=false>
 inline geometry_msgs::Pose binPoseLog(const geometry_msgs::Pose& pose,
                                    int bins_per_meter,
                                    int bins_per_rotation)
@@ -836,6 +838,7 @@ inline geometry_msgs::Pose binPoseLog(const geometry_msgs::Pose& pose,
   if (w != 0)
   {
     double s;
+    // Because sin x = +/- sqrt(1 = cos^2 x), a is sin x
     double a = sqrt(1.0 - w * w);
     // When a is zero, w was nearly one, rotation is nearly zero, so make scale
     // 0 (v should be nearly zero anyway).
@@ -863,11 +866,44 @@ inline geometry_msgs::Pose binPoseLog(const geometry_msgs::Pose& pose,
       v = -v;
     }
   }
-  // To get to rotations, scale dwon by 2 (since values of one represent 180
-  // degrees or a half rotation).
-  unsigned bin_size = bins_per_rotation / 2;
+  // Before binning, stretch the ball of the log transform into a cube. This
+  // keeps the bins all roughly the same size and prevents there from being any
+  // tiny bins on a boundary.
+  double stretch_factor;
+  double pre_bin_length_v = v.norm();
+  double abs_max_coord = v.cwiseAbs().maxCoeff();
+  if (abs_max_coord != 0)
+  {
+    stretch_factor = pre_bin_length_v / abs_max_coord;
+  }
+  else
+  {
+    stretch_factor = 1.0;
+  }
+  if (cube_stretch) v *= stretch_factor;
+
+  // To get bins size to rotations, scale down by 2 (since values of one
+  // represent 180 degrees or a half rotation). Scale up by stretch factor to
+  // stretch the ball into a cube.
+  int bin_size = (bins_per_rotation / 2);
   v *= bin_size;
+//  v += Eigen::Vector3d(.5, .5, .5);
   v = v.array().floor() / bin_size;
+  // De-stretch the bin. The stretch factor must be re-calculated from the
+  // binned position.
+  abs_max_coord = v.cwiseAbs().maxCoeff();
+  double post_bin_length_v = v.norm();
+  double destretch_factor;
+  if (abs_max_coord != 0)
+  {
+    destretch_factor = abs_max_coord / post_bin_length_v;
+  }
+  else
+  {
+    destretch_factor = 1.0;
+  }
+  if (cube_stretch) v *= destretch_factor;
+
   double length_v = v.norm();
   // If w was zero, we wean to leave v alone and use the value set above.
   if (w != 0)
@@ -893,12 +929,359 @@ inline geometry_msgs::Pose binPoseLog(const geometry_msgs::Pose& pose,
       w = 1.0;
     }
   }
+
+  // The math can leave some numbers very nearly zero. To get them to bin
+  // properly (due to the 2:1 mapping and needing to test for zero/negative).
+  constexpr double tolerance = 1e-9;
+  w = std::abs(w) > tolerance ? w : 0.0;
+  for (unsigned int i=0; i<3; ++i)
+  {
+    v(i) = std::abs(v(i)) > tolerance ? v(i) : 0.0;
+  }
+
+  if (w < 0.0 || w == 0.0 && (
+        v(0) < 0.0 || v(0) == 0.0 && (
+          v(1) < 0.0 || v(1) == 0.0 && (
+            v(2) < 0.0))))
+  {
+    w = -w;
+    v = -v;
+  }
+
+  // Remove any negative zeros. This is to allow for ultra-fast hashing of the
+  // binned pose by using the raw bits of the floating point number.
+  if (w == -0.0)
+  {
+    w = std::copysign(w, 0.0);
+  }
+  for (unsigned int i=0; i<3; ++i)
+  {
+    if (v(i) == -0.0)
+    {
+      v(i) = std::copysign(v(i), 0.0);
+    }
+  }
+  EXPECT_TRUE(std::isfinite(w));
+  EXPECT_TRUE(std::isfinite(v(0)));
+  EXPECT_TRUE(std::isfinite(v(1)));
+  EXPECT_TRUE(std::isfinite(v(2)));
+  assert(std::isfinite(w));
+  assert(std::isfinite(v(0)));
+  assert(std::isfinite(v(1)));
+  assert(std::isfinite(v(2)));
+
   rv.orientation.w = w;
   rv.orientation.x = v[0];
   rv.orientation.y = v[1];
   rv.orientation.z = v[2];
   return rv;
 }
+
+inline geometry_msgs::Pose binPose3(const geometry_msgs::Pose& pose,
+                                   int bins_per_meter,
+                                   int bins_per_rotation)
+{
+  geometry_msgs::Pose rv;
+  // std::round is slow on AVX2, but floor is fast, and where the
+  // quantization happens is not important
+  rv.position.x = std::floor(pose.position.x * bins_per_meter) / bins_per_meter;
+  rv.position.y = std::floor(pose.position.y * bins_per_meter) / bins_per_meter;
+  rv.position.z = std::floor(pose.position.z * bins_per_meter) / bins_per_meter;
+
+  // Decompose uniformly from SO(3) to the volume of a cube by solving this
+  // uniform distribution in reverse:
+  //
+  // w = std::sqrt(1.0 - u0) * sin(2*M_PI*u1)
+  // x = std::sqrt(u0) * cos(2*M_PI*u2)
+  // y = std::sqrt(u0) * sin(2*M_PI*u2)
+  // z = std::sqrt(1.0 - u0) * cos(2*M_PI*u1)
+  //
+  // Note w/x/y/z can be in any order and the distribution is still evenly
+  // spaced in SO(3), so the choice of which way to assign w/x/y/z is arbitrary
+  // but needs to remain consistent. The order above is choosen so rotations
+  // around the z axis are binned evenly on rotation angle (but x/y axes are
+  // not). This is a good choice for navigtion, where 2D navigation will always
+  // use rotations only about the z-axis, and 3D navigation may use any
+  // orientation, but would often have rotation axes near the z-axis as well.
+  // Therefore:
+  //
+  // w / z = tan(2*M_PI*u1)
+  // y / x = tan(2*M_PI*u2)
+  //
+  // Once u1/u2 are known, solve for u0 by using the coeffcient with the
+  // maximum absolute value.
+  Eigen::Array4d q(
+      pose.orientation.w,
+      pose.orientation.x,
+      pose.orientation.y,
+      pose.orientation.z);
+  // Go ahead and map any rotation in the "lower" hyper-hemisphere to its
+  // equivalent antipode rotation. This prevents us from having to map antipode
+  // rotations to the same bins later on, which would be complicated due to
+  // rounding leaving the numbers of matching rotations slightly different.
+  if (q(0) < 0.0 || q(0) == 0.0 && (
+        q(1) < 0.0 || q(1) == 0.0 && (
+          q(2) < 0.0 || q(2) == 0.0 && (
+            q(3) < 0.0))))
+  {
+    q = -q;
+  }
+
+  // Use atan2 to avoid singularities
+  double angle1 = std::atan2(q(0), q(3));
+  double angle2 = std::atan2(q(2), q(1));
+  Eigen::Array3d u;
+  u(1) = angle1 / (2.0 * M_PI);
+  u(2) = angle2 / (2.0 * M_PI);
+  int index;
+  // When calculating u0, use quaternion coordinates with the largest absolute
+  // value.  This helps avoid numerical issues around zero. If the coordinate
+  // value is far from zero, then both parts of the multiplication to calculate
+  // that value must not be near zero. This gives the maximum precision to the
+  // value of u0.
+  q.abs().maxCoeff(&index);
+  switch (index)
+  {
+    default:
+    case 0:
+    {
+      // w = std::sqrt(1.0 - u0) * sin(2*M_PI*u1)
+      u(0) = q(0) / std::sin(angle1);
+      u(0) = 1.0 - u(0) * u(0);
+      break;
+    }
+    case 1:
+    {
+      // x = std::sqrt(u0) * cos(2*M_PI*u2)
+      u(0) = q(1) / std::cos(angle2);
+      u(0) = u(0) * u(0);
+      break;
+    }
+    case 2:
+    {
+      // y = std::sqrt(u0) * sin(2*M_PI*u2)
+      u(0) = q(2) / std::sin(angle2);
+      u(0) = u(0) * u(0);
+      break;
+    }
+    case 3:
+    {
+      // z = std::sqrt(1.0 - u0) * cos(2*M_PI*u1)
+      u(0) = q(3) / std::cos(angle1);
+      u(0) = 1.0 - u(0) * u(0);
+      break;
+    }
+  }
+  // Its possible the trig above gets us slightly out of range on u(0), as
+  // sin(angle1) may be slightly more than the original angle, meaning when
+  // we divide by the coordinate (esp. near 1) we get a value just slightly
+  // more than 1, when mathematically it should be 1 or slightly less than 1.
+  // Fix this by clamping to the correct range.
+  u(0) = std::min(std::max(u(0), 0.0), 1.0);
+  assert(u(1) >= -0.5);
+  assert(u(1) <= 0.5);
+  assert(u(2) >= -0.5);
+  assert(u(2) <= 0.5);
+
+  // Need to double the number of buckets to get the correct size in rotations.
+  // This is because a value of one of the u values of .5 represents an entire
+  // rotation.
+  const double bucket_factor = bins_per_rotation * 2;
+  u *= bucket_factor;
+  // Multiply by a value just smaller than 1.0 to prevent from very narrow
+  // bucket when at end points. IOW, avoid getting `bucket_factor` as an input
+  // to the floor() operation below, as that would result in a very narrow
+  // bucket. This also lets us simply add .5 to the output of floor to avoid
+  // the endpoints of the range completely (avoiding multiplying by zero
+  // later).
+  constexpr double avoid_ends_factor = 1.0 - 4.0 * std::numeric_limits<double>::epsilon();
+  u *= avoid_ends_factor;
+  // Avoid zero values for the binned u values, as that would create huge
+  // buckets at zero (since multiplying by zero destroys the significance of
+  // the other variable).
+  u = (u.array().floor() + Eigen::Array3d(0.5, 0.5, 0.5)) / bucket_factor;
+  assert(u(0) > 0.0);
+  assert(u(0) < 1.0);
+  assert(u(1) > -0.5);
+  assert(u(1) < 0.5);
+  assert(u(2) > -0.5);
+  assert(u(2) < 0.5);
+  double angle_u1 = 2 * M_PI * u(1);
+  double angle_u2 = 2 * M_PI * u(2);
+  double sin_angle_u1 = std::sin(angle_u1);
+  double cos_angle_u1 = std::cos(angle_u1);
+  double sin_angle_u2 = std::sin(angle_u2);
+  double cos_angle_u2 = std::cos(angle_u2);
+  q(0) = std::sqrt(1.0 - u(0)) * sin_angle_u1;
+  q(1) = std::sqrt(u(0)) * cos_angle_u2;
+  q(2) = std::sqrt(u(0)) * sin_angle_u2;
+  q(3) = std::sqrt(1.0 - u(0)) * cos_angle_u1;
+
+  assert(std::isfinite(q(0)));
+  assert(std::isfinite(q(1)));
+  assert(std::isfinite(q(2)));
+  assert(std::isfinite(q(3)));
+  assert(q(0) > 0.0);
+  assert(q(1) != 0.0);
+  assert(q(2) != 0.0);
+  assert(q(3) != 0.0);
+
+  rv.orientation.w = q(0);
+  rv.orientation.x = q(1);
+  rv.orientation.y = q(2);
+  rv.orientation.z = q(3);
+
+  return rv;
+}
+
+// Returns maximum angular distance for two rotations that hit the same bin
+// (from furthest corner to furthest corner). If the desired error is to the
+// center of the bin (the binned pose value), simply call with double the
+// bins_per_rotation value (to get the max bin corner to the center bin
+// position).
+//
+// Note: if running in 2D mode, the poses bin completely fairly when the
+// rotation axis is the z-axis. In such cases, the true maximum angular error
+// is just 2 * M_PI / bins_per_rotation.
+inline double binPose3AngularDistanceLimit(int bins_per_rotation)
+{
+  // The largest bins are those at u0 = 1 or u0 = 0. To find the maximum
+  // angular bin size (error) simply measure the angular distance along the
+  // diagonal of the bin.
+  //
+  // So compare the corresponding quaternions at u0 = u1 = u2 = 0.0, and the
+  // cooresponding corner u0 = u1 = u2 = 1 / (2 * bins_per_rotation)
+  //
+  // So q0 (at the corner) would be:
+  //
+  // w = std::sqrt(1.0 - u0) * sin(2*M_PI*u1)
+  // x = std::sqrt(u0) * cos(2*M_PI*u2)
+  // y = std::sqrt(u0) * sin(2*M_PI*u2)
+  // z = std::sqrt(1.0 - u0) * cos(2*M_PI*u1)
+  // w = 0
+  // x = 0
+  // y = 0
+  // z = 1
+  //
+  // Because the angular bin size is found using the dot product of the
+  // corners, and the corner being examined has zero cooefficients at w/x/y,
+  // only the z coefficient is relevant.
+  //
+  // So z at the corresponding corner:
+  // z_corner = std::sqrt(1 - .5 / bins_per_rotation) * cos(M_PI / bins_per_rotation)
+  //
+  // The angular distance from the original quaternion to the binned quaternion is therefore:
+  // 2 * acos(q dot binned_q)
+  // 2 * acos(z_corner)
+  // so:
+  // 2 * acos(std::sqrt(1 - .5 / bins_per_rotation) * cos(M_PI / bins_per_rotation))
+  //
+  return 2 * acos(std::sqrt(1.0 - .5 / bins_per_rotation) * cos(M_PI / bins_per_rotation));
+}
+
+template <bool tesseract_stretch=false>
+inline geometry_msgs::Pose binPoseSimple(const geometry_msgs::Pose& pose,
+                                   int bins_per_meter,
+                                   int bins_per_rotation)
+{
+  geometry_msgs::Pose rv;
+  // std::round is slow on AVX2, but floor is fast, and where the
+  // quantization happens is not important
+  rv.position.x = std::floor(pose.position.x * bins_per_meter) / bins_per_meter;
+  rv.position.y = std::floor(pose.position.y * bins_per_meter) / bins_per_meter;
+  rv.position.z = std::floor(pose.position.z * bins_per_meter) / bins_per_meter;
+
+  Eigen::Array4d q(
+      pose.orientation.w,
+      pose.orientation.x,
+      pose.orientation.y,
+      pose.orientation.z);
+  EXPECT_NEAR(q.matrix().norm(), 1.0, 1e-6);
+  if (tesseract_stretch)
+  {
+    double abs_max_coord = q.abs().maxCoeff();
+    double stretch_factor = 1.0 / abs_max_coord;
+    q *= stretch_factor;
+  }
+  int bin_factor = bins_per_rotation / 4;
+  q = (q * bin_factor).floor();
+//  q = (q * bin_factor + 0.5).floor();
+//  q = (q * bin_factor + 0.5).floor() / bin_factor;
+//  double destretch_factor = q.abs().maxCoeff();
+//  q *= destretch_factor;
+  q.matrix().normalize();
+
+  if (q(0) < 0.0 || q(0) == 0.0 && (
+        q(1) < 0.0 || q(1) == 0.0 && (
+          q(2) < 0.0 || q(2) == 0.0 && (
+            q(3) < 0.0))))
+  {
+    q = -q;
+  }
+
+  EXPECT_NEAR(q.matrix().norm(), 1.0, 1e-6);
+
+  rv.orientation.w = q(0);
+  rv.orientation.x = q(1);
+  rv.orientation.y = q(2);
+  rv.orientation.z = q(3);
+
+  return rv;
+}
+
+inline geometry_msgs::Pose binPoseAxisAngle(const geometry_msgs::Pose& pose,
+                                   int bins_per_meter,
+                                   int bins_per_rotation)
+{
+  geometry_msgs::Pose rv;
+  // std::round is slow on AVX2, but floor is fast, and where the
+  // quantization happens is not important
+  rv.position.x = std::floor(pose.position.x * bins_per_meter) / bins_per_meter;
+  rv.position.y = std::floor(pose.position.y * bins_per_meter) / bins_per_meter;
+  rv.position.z = std::floor(pose.position.z * bins_per_meter) / bins_per_meter;
+
+  Eigen::Quaterniond q(
+      pose.orientation.w,
+      pose.orientation.x,
+      pose.orientation.y,
+      pose.orientation.z);
+  // rotation represents the amount of rotation represented in the axis/angle
+  // representation of the versor (quaternion). Bin rotation directly, and bin
+  // the axis as-is by projecting the solid ball that the vector part of the
+  // versor (quaternion) into a cubic solid.
+  double rotation = atan2(q.vec().norm(), q.w()) / M_PI;
+  q.w() = std::cos(2 * M_PI * (std::floor(rotation * bins_per_rotation) / bins_per_rotation));
+  int max_index;
+  double abs_max_coord = q.vec().cwiseAbs().maxCoeff(&max_index);
+  double stretch_factor = 1.0 / abs_max_coord;
+  q.vec() *= stretch_factor;
+  int bin_factor = bins_per_rotation / 2;
+  q.vec() = (q.vec() * bin_factor).array().floor() / bin_factor;
+  double destretch_factor = std::abs(q.vec()[max_index]);
+  q.vec() *= destretch_factor;
+  // XXX Should we do this????
+  q.normalize();
+
+  // There are two versors (quaternions) that represent each rotation. To bin
+  // properly, map the negative hemisphere to their positive equivalents.
+  if (q.w() < 0.0 || q.w() == 0.0 && (
+        q.x() < 0.0 || q.x() == 0.0 && (
+          q.y() < 0.0 || q.y() == 0.0 && (
+            q.z() < 0.0))))
+  {
+    q.coeffs() *= -1.0;
+  }
+
+  EXPECT_NEAR(q.norm(), 1.0, 1e-6);
+
+  rv.orientation.w = q.w();
+  rv.orientation.x = q.x();
+  rv.orientation.y = q.y();
+  rv.orientation.z = q.z();
+
+  return rv;
+}
+
 
 #define EXPECT_POSE_NEAR(p1, p2) \
   EXPECT_NEAR(p1.position.x, p2.position.x, 1e-6); \
@@ -918,6 +1301,89 @@ inline geometry_msgs::Pose binPoseLog(const geometry_msgs::Pose& pose,
       std::abs(p1.orientation.x - p2.orientation.x) > 1e-6 || \
       std::abs(p1.orientation.y - p2.orientation.y) > 1e-6 || \
       std::abs(p1.orientation.z - p2.orientation.z) > 1e-6)
+
+class PoseBinKey
+{
+public:
+  PoseBinKey(const geometry_msgs::Pose& pose)
+  {
+    binned_pose_ = pose;
+    hash_ = hash_value();
+  }
+
+  // Directly store the hash value in a public location for speed.
+  size_t hash_;
+
+  bool operator==(const PoseBinKey& rhs) const
+  {
+    return binned_pose_.orientation.x == rhs.binned_pose_.orientation.x &&
+           binned_pose_.orientation.y == rhs.binned_pose_.orientation.y &&
+           binned_pose_.orientation.z == rhs.binned_pose_.orientation.z &&
+           binned_pose_.orientation.w == rhs.binned_pose_.orientation.w &&
+           binned_pose_.position.x == rhs.binned_pose_.position.x &&
+           binned_pose_.position.y == rhs.binned_pose_.position.y &&
+           binned_pose_.position.z == rhs.binned_pose_.position.z;
+  }
+
+  const geometry_msgs::Pose& getBinnedPose() const { return binned_pose_; } 
+protected:
+  geometry_msgs::Pose binned_pose_;
+
+  size_t hash_value() const
+  {
+    // Compute the hash off the raw bits by treating the doubles as if they
+    // were unsigned 64-bit integers, multiplying them by medium sized
+    // consecutive primes and summing them up. This operation is SIMD
+    // friendly and much faster than std::hash, and works well for the types
+    // of floating point coordinates encountered in Costmap queries.
+    union {double d; uint64_t uint;} u[7] = {
+        binned_pose_.orientation.x,
+        binned_pose_.orientation.y,
+        binned_pose_.orientation.z,
+        binned_pose_.orientation.w,
+        binned_pose_.position.x,
+        binned_pose_.position.y,
+        binned_pose_.position.z,
+    };
+    uint64_t primes[8] = {
+        30011,
+        30013,
+        30029,
+        30047,
+        30059,
+        30071,
+        30089,
+        30091,
+    };
+    // Make the hash SIMD friendly by using primes and addition instead of
+    // hash_combine which must be done sequentially.
+    uint64_t rv = 0;
+    for (unsigned i=0; i<7; ++i)
+    {
+      rv += u[i].uint * primes[i];
+    }
+    return static_cast<size_t>(rv);
+  }
+};
+
+struct PoseBinKeyHash
+{
+  size_t operator()(const PoseBinKey& key) const
+  {
+    return key.hash_;
+  }
+};
+
+struct PoseBinKeyEqual
+{
+  bool operator()(const PoseBinKey& lhs, const PoseBinKey& rhs) const
+  {
+    return lhs == rhs;
+  }
+};
+
+using PoseBinEntry = std::pair<size_t, double>;
+using PoseBinMap = std::unordered_map<PoseBinKey, PoseBinEntry, PoseBinKeyHash, PoseBinKeyEqual>;
   
 void test_pose_binning_impl(int bins_per_meter, int bins_per_rotation)
 {
@@ -1021,6 +1487,7 @@ void test_pose_binning_impl(int bins_per_meter, int bins_per_rotation)
   std::uniform_real_distribution<> distr(-1.0, 1.0);
 
   double max_angular_distance = 0.0;
+  const double angular_distance_limit = binPose3AngularDistanceLimit(2 * bins_per_rotation);
   for (unsigned i=0; i<n; ++i)
   {
     pose_arr[i].position.x = distr(gen);
@@ -1031,6 +1498,7 @@ void test_pose_binning_impl(int bins_per_meter, int bins_per_rotation)
     pose_arr[i].orientation.y = q.y();
     pose_arr[i].orientation.z = q.z();
     pose_arr[i].orientation.w = q.w();
+#if 0
     binned_poses[i] = binPose2(pose_arr[i], bins_per_meter, bins_per_rotation);
     // reconstruct q representation of the binned pose
     double half_alpha = M_PI * binned_poses[i].orientation.w;
@@ -1041,18 +1509,23 @@ void test_pose_binning_impl(int bins_per_meter, int bins_per_rotation)
         sin_half_alpha * std::cos(2 * M_PI * binned_poses[i].orientation.x),
         sin_half_alpha * std::cos(2 * M_PI * binned_poses[i].orientation.y),
         sin_half_alpha * std::cos(2 * M_PI * binned_poses[i].orientation.z));
+#endif
+    binned_poses[i] = binPose3(pose_arr[i], bins_per_meter, bins_per_rotation);
+    // Verify a binned pose maps back to itself
+    geometry_msgs::Pose check_pose = binPose3(binned_poses[i], bins_per_meter, bins_per_rotation);
+    EXPECT_POSE_NEAR(check_pose, binned_poses[i]);
+    Eigen::Quaterniond binned_q(
+        binned_poses[i].orientation.w,
+        binned_poses[i].orientation.x,
+        binned_poses[i].orientation.y,
+        binned_poses[i].orientation.z);
     // The distance between two quaternions is simply the dot-product.
     // To get into radians solve the equaion:
     // cos (angular_distance/2) = |q1 dot q2|
-    double angular_distance = 2 * acos(std::abs(q.dot(binned_q.normalized())));
+    double abs_prod = std::abs(q.dot(binned_q.normalized()));
+    double angular_distance = 2 * acos(abs_prod <= 1 ? abs_prod : 0);
     max_angular_distance = std::max(angular_distance, max_angular_distance);
-    // Figuring out the size of each bin geometrically is a challenge. From
-    // emperical results it seems to be just a bit more than sqrt(2) when there
-    // are plenty of bins. Use a factor of 1.5 for reasonable
-    // bins_per_rotation. When bins_per_rotation gets small, the factor is
-    // worse. Use 2.0 for 4 or fewer and 1.6 as the limit from 5 to 8.
-    double angular_distance_limit = bins_per_rotation <= 4 ? 2.0 : bins_per_rotation < 16 ? 1.6 : 1.5;
-    if (angular_distance > angular_distance_limit * 2 * M_PI / bins_per_rotation)
+    if (angular_distance > angular_distance_limit)
     {
       std::cout << "angular distance: " << angular_distance
         << " original q.w: " << q.w()
@@ -1066,7 +1539,8 @@ void test_pose_binning_impl(int bins_per_meter, int bins_per_rotation)
 
   std::cout << "bins_per_rotation: " << bins_per_rotation
     << " max_angular_distance: " << max_angular_distance
-    << " max_angular_distance ratio: " << max_angular_distance / (2 * M_PI / bins_per_rotation)
+    << " angular_distance_limit: " << angular_distance_limit
+    << " max_angular_distance ratio: " << max_angular_distance / angular_distance_limit
     << std::endl;
 #if 0
   std::cout << "first pose: " << pose_arr[0] << std::endl;
@@ -1137,12 +1611,159 @@ void test_pose_binning_impl(int bins_per_meter, int bins_per_rotation)
   start_time = std::chrono::high_resolution_clock::now();
   for (unsigned i=0; i<n; ++i)
   {
-    binned_poses[i] = binPoseLog(pose_arr[i], bins_per_meter, bins_per_rotation);
+    binned_poses[i] = binPose3(pose_arr[i], bins_per_meter, bins_per_rotation);
   }
   bin_pose_time = std::chrono::high_resolution_clock::now() - start_time;
-  std::cout << "Average time to binLog random pose: " <<
+  std::cout << "Average time to bin3 random pose: " <<
       std::chrono::duration_cast<std::chrono::nanoseconds>(bin_pose_time).count() / n <<
       "ns" << std::endl;
+
+#if 0
+  PoseBinMap pose_bin_map;
+  for (double i=0; i<360.0; i+=.25)
+  {
+    double half_cos = cos(i * M_PI / 360.0);
+    double half_sin = sin(i * M_PI / 360.0);
+    in.orientation.x = 0.0;
+    in.orientation.y = 0.0;
+    in.orientation.z = half_sin;
+    in.orientation.w = half_cos;
+    out = binPose3(in, bins_per_meter, bins_per_rotation);
+    PoseBinKey pose_bin_key(out);
+    Eigen::Quaterniond q(
+        in.orientation.w,
+        in.orientation.x,
+        in.orientation.y,
+        in.orientation.z);
+    Eigen::Quaterniond binned_q(
+        out.orientation.w,
+        out.orientation.x,
+        out.orientation.y,
+        out.orientation.z);
+    double angular_distance = 2 * acos(std::abs(q.normalized().dot(binned_q.normalized())));
+    auto& pose_bin = pose_bin_map[pose_bin_key];
+    ++pose_bin.first;
+    pose_bin.second = std::max(pose_bin.second, angular_distance);
+  }
+  for (const auto& bin : pose_bin_map)
+  {
+    std::cout << "bin key: " << bin.first.getBinnedPose()
+      << " size: " << bin.second.first
+      << " angular size: " << bin.second.second << std::endl;
+  }
+#endif
+}
+
+using BinPoseFunction = std::function<geometry_msgs::Pose(const geometry_msgs::Pose&, int, int)>;
+
+void eval_pose_binning(BinPoseFunction bin_func, int bins_per_meter, int bins_per_rotation)
+{
+  // Measure bin_func fairness by sampling a higher resolution uniform grid on SO(3)
+  PoseBinMap pose_bin_map;
+  int factor = 8;
+  int nb = factor * bins_per_rotation;
+  std::mt19937 gen(1);
+  std::uniform_real_distribution<> distr(-.499, .499);
+  for (unsigned int u1 = 0; u1 < nb; ++u1)
+  {
+    for (unsigned int u2 = 0; u2 < nb; ++u2)
+    {
+      for (unsigned int u3 = 0; u3 < nb; ++u3)
+      {
+        const double d1 = (static_cast<double>(u1) + 0.5 + distr(gen)) / nb;
+        const double d1_c0 = std::sqrt(1.0 - d1);
+        const double d1_c1 = std::sqrt(d1);
+        const double d2 = (static_cast<double>(u2) + 0.5 + distr(gen)) / nb;
+        const double cosd2 = std::cos(2 * M_PI * d2);
+        const double sind2 = std::sin(2 * M_PI * d2);
+        const double d3 = (static_cast<double>(u3) + 0.5 + distr(gen)) / nb;
+        const double cosd3 = std::cos(2 * M_PI * d3);
+        const double sind3 = std::sin(2 * M_PI * d3);
+        geometry_msgs::Pose pose;
+        pose.position.x = 0;
+        pose.position.y = 0;
+        pose.position.z = 0;
+        Eigen::Quaterniond q(
+            d1_c0 * sind2,
+            d1_c1 * cosd3,
+            d1_c1 * sind3,
+            d1_c0 * cosd2);
+        pose.orientation.w = q.w();
+        pose.orientation.x = q.x();
+        pose.orientation.y = q.y();
+        pose.orientation.z = q.z();
+        pose = bin_func(pose, bins_per_meter, bins_per_rotation);
+        Eigen::Quaterniond binned_q(
+            pose.orientation.w,
+            pose.orientation.x,
+            pose.orientation.y,
+            pose.orientation.z);
+        PoseBinKey pose_bin_key(pose);
+        double angular_distance = 2 * acos(std::abs(q.normalized().dot(binned_q.normalized())));
+        auto& pose_bin = pose_bin_map[pose_bin_key];
+        ++pose_bin.first;
+        pose_bin.second = std::max(pose_bin.second, angular_distance);
+      }
+    }
+  }
+  size_t total_bins = 0, min_bins = std::numeric_limits<size_t>::max(), max_bins = 0;
+  double total_angle = 0, min_angle = std::numeric_limits<double>::max(), max_angle = 0;
+  for (const auto& bin : pose_bin_map)
+  {
+    size_t bin_count = bin.second.first;
+    double angular_size = bin.second.second;
+    total_bins += bin_count;
+    total_angle += angular_size;
+    min_bins = std::min(min_bins, bin_count);
+    max_bins = std::max(max_bins, bin_count);
+    min_angle = std::min(min_angle, angular_size);
+    max_angle = std::max(max_angle, angular_size);
+  }
+  double mean_bins = static_cast<double>(total_bins) / pose_bin_map.size();
+  double mean_angle = total_angle / pose_bin_map.size();
+  double bins_sum_of_sq_diffs = 0;
+  double angle_sum_of_sq_diffs = 0;
+  for (const auto& bin : pose_bin_map)
+  {
+    size_t bin_count = bin.second.first;
+    double angular_size = bin.second.second;
+    double diff = bin_count - mean_bins;
+    bins_sum_of_sq_diffs += diff * diff;
+    diff = angular_size - mean_angle;
+    angle_sum_of_sq_diffs += diff * diff;
+    if (bin_count == max_bins || bin_count == min_bins)
+    {
+      std::cout << "bin key: " << bin.first.getBinnedPose()
+        << " size: " << bin.second.first
+        << " angular size: " << bin.second.second << std::endl;
+    }
+  }
+  double stdev_bins = std::sqrt(bins_sum_of_sq_diffs / (pose_bin_map.size() - 1));
+  double stdev_angle = std::sqrt(angle_sum_of_sq_diffs / (pose_bin_map.size() - 1));
+  std::cout << "number of bins: " << pose_bin_map.size() << std::endl;
+  std::cout << "mean size of bin: " << mean_bins << std::endl;
+  std::cout << "min size of bin: " << min_bins << std::endl;
+  std::cout << "max size of bin: " << max_bins << std::endl;
+  std::cout << "stdev: " << stdev_bins << std::endl;
+  std::cout << "mean max-angle of bin: " << mean_angle << std::endl;
+  std::cout << "min max-angle of bin: " << min_angle << std::endl;
+  std::cout << "max max-angle of bin: " << max_angle << std::endl;
+  std::cout << "stdev: " << stdev_angle << std::endl;
+}
+
+Eigen::Quaterniond getPose3Quaternion(double d1, double d2, double d3)
+{
+  const double d1_c0 = std::sqrt(1.0 - d1);
+  const double d1_c1 = std::sqrt(d1);
+  const double cosd2 = std::cos(2 * M_PI * d2);
+  const double sind2 = std::sin(2 * M_PI * d2);
+  const double cosd3 = std::cos(2 * M_PI * d3);
+  const double sind3 = std::sin(2 * M_PI * d3);
+  return Eigen::Quaterniond(
+      d1_c0 * sind2,
+      d1_c1 * cosd3,
+      d1_c1 * sind3,
+      d1_c0 * cosd2);
 }
 
 TEST(test_octree_solver, test_pose_binning)
@@ -1153,6 +1774,78 @@ TEST(test_octree_solver, test_pose_binning)
   {
     test_pose_binning_impl(16, bins_per_rotation);
   }
+
+  std::cout << "Stats for binPose" << std::endl;
+  eval_pose_binning(binPose, 16, 16);
+  std::cout << "Stats for binPose2" << std::endl;
+  eval_pose_binning(binPose2, 16, 16);
+  std::cout << "Stats for binPoseLog" << std::endl;
+  eval_pose_binning(binPoseLog, 16, 16);
+  std::cout << "Stats for binPoseLog cube stretch" << std::endl;
+  eval_pose_binning(binPoseLog<true>, 16, 16);
+  std::cout << "Stats for binPose3" << std::endl;
+  eval_pose_binning(binPose3, 16, 16);
+  std::cout << "Stats for binPoseSimple" << std::endl;
+  eval_pose_binning(binPoseSimple, 16, 16);
+  std::cout << "Stats for binPoseSimple tesseract stretch" << std::endl;
+  eval_pose_binning(binPoseSimple<true>, 16, 16);
+  std::cout << "Stats for binPoseAxisAngle" << std::endl;
+  eval_pose_binning(binPoseSimple<true>, 16, 16);
+  geometry_msgs::Pose in, out, expected;
+  in.position.x = 0;
+  in.position.y = 0;
+  in.position.z = 0;
+  in.orientation.w = 0;
+  in.orientation.x = 0;
+  in.orientation.y = 0;
+  in.orientation.z = 1;
+  out = binPose3(in, 16, 16);
+  in.orientation.z = -1;
+  expected = binPose3(in, 16, 16);
+  EXPECT_POSE_NEAR(out, expected);
+#if 0
+  int bins = 16;
+  PoseBinMap pose_bin_map;
+  for (unsigned i=0; i<360; ++i)
+  {
+    double half_cos = cos(i * M_PI / 360.0);
+    double half_sin = sin(i * M_PI / 360.0);
+    in.orientation.x = 0.0;
+    in.orientation.y = 0.0;
+    in.orientation.z = half_sin;
+    in.orientation.w = half_cos;
+//    out = binPoseLog<true>(in, bins, bins);
+    out = binPose3(in, bins, bins);
+    PoseBinKey pose_bin_key(out);
+    Eigen::Quaterniond q(
+        in.orientation.w,
+        in.orientation.x,
+        in.orientation.y,
+        in.orientation.z);
+    Eigen::Quaterniond binned_q(
+        out.orientation.w,
+        out.orientation.x,
+        out.orientation.y,
+        out.orientation.z);
+    double angular_distance = 2 * acos(std::abs(q.normalized().dot(binned_q.normalized())));
+    auto& pose_bin = pose_bin_map[pose_bin_key];
+    ++pose_bin.first;
+    pose_bin.second = std::max(pose_bin.second, angular_distance);
+#if 0
+    std::cout << i << ": "
+      << out.orientation.x << " "
+      << out.orientation.y << " "
+      << out.orientation.z << " "
+      << out.orientation.w << std::endl;
+#endif
+  }
+  for (const auto& bin : pose_bin_map)
+  {
+    std::cout << "bin key: " << bin.first.getBinnedPose()
+      << " size: " << bin.second.first
+      << " angular size: " << bin.second.second << std::endl;
+  }
+#endif
 }
 
 int main(int argc, char* argv[])
