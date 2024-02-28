@@ -20,6 +20,7 @@
 
   <buildtool_depend>catkin</buildtool_depend>
 
+  <build_depend>badger_test_lib</build_depend>
   <build_depend>tf2_sensor_msgs</build_depend>
   <build_depend>tf2_geometry_msgs</build_depend>
   <build_depend>boost</build_depend>

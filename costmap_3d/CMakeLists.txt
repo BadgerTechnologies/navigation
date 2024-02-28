@@ -135,8 +135,19 @@ target_link_libraries(costmap_3d_node
 target_compile_options(costmap_3d_node PRIVATE ${EXTRA_COMPILE_OPTIONS})
 
 if(CATKIN_ENABLE_TESTING)
-  catkin_add_gtest(test_octree_solver test/test_octree_solver.cpp)
+  find_package(badger_test_lib)
+  badger_add_rostest_gtest(
+    test_octree_solver
+    test/octree_solver.test
+    test/test_octree_solver.cpp
+    )
   target_link_libraries(test_octree_solver costmap_3d ${catkin_LIBRARIES})
+  badger_generate_test_script()
+  install(FILES
+    test/aisles.bt
+    test/test_robot.stl
+    DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/test/
+    )
 endif()
 
 install(TARGETS
