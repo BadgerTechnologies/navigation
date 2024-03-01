@@ -78,6 +78,6 @@ protected:
   LayeredCostmap3D* layered_costmap_3d_;
 };
 
-}  // namespace costmap_2d
+}  // namespace costmap_3d
 
 #endif  // COSTMAP_3D_COSTMAP_3D_TO_2D_LAYER_H_

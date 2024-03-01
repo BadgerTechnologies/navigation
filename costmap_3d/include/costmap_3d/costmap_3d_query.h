@@ -37,13 +37,16 @@
 #ifndef COSTMAP_3D_COSTMAP_3D_QUERY_H_
 #define COSTMAP_3D_COSTMAP_3D_QUERY_H_
 
-#include <string>
-#include <memory>
-#include <unordered_map>
-#include <limits>
+#include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <limits>
+#include <memory>
 #include <shared_mutex>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
 #include <Eigen/Dense>
 #include <fcl/geometry/bvh/BVH_model.h>
 #include <fcl/geometry/shape/utility.h>
@@ -116,13 +119,16 @@ public:
   static constexpr QueryRegion ALL = costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_REGION_ALL;
   static constexpr QueryRegion LEFT = costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_REGION_LEFT;
   static constexpr QueryRegion RIGHT = costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_REGION_RIGHT;
-  static constexpr QueryRegion RECTANGULAR_PRISM = costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_REGION_RECTANGULAR_PRISM;
+  static constexpr QueryRegion RECTANGULAR_PRISM =
+    costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_REGION_RECTANGULAR_PRISM;
   static constexpr QueryRegion MAX = RECTANGULAR_PRISM+1;
 
   /// What kind of obstacles to consider for the query.
   using QueryObstacles = uint8_t;
-  static constexpr QueryObstacles LETHAL_ONLY = costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_OBSTACLES_LETHAL_ONLY;
-  static constexpr QueryObstacles NONLETHAL_ONLY = costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_OBSTACLES_NONLETHAL_ONLY;
+  static constexpr QueryObstacles LETHAL_ONLY =
+    costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_OBSTACLES_LETHAL_ONLY;
+  static constexpr QueryObstacles NONLETHAL_ONLY =
+    costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_OBSTACLES_NONLETHAL_ONLY;
   static constexpr QueryObstacles OBSTACLES_MAX = NONLETHAL_ONLY+1;
 
   /** @brief Get the cost to put the robot base at the given pose.
@@ -252,7 +258,8 @@ public:
   };
 
   /** @brief Alternate footprintDistance interface taking a DistanceOptions */
-  virtual double footprintDistance(const geometry_msgs::Pose& pose, const DistanceOptions& opts, DistanceResult* result = nullptr);
+  virtual double footprintDistance(
+      const geometry_msgs::Pose& pose, const DistanceOptions& opts, DistanceResult* result = nullptr);
 
   /** @brief Recalculate footprintDistance with a previous result at a new pose. */
   virtual double footprintDistance(const geometry_msgs::Pose& pose, const DistanceResult& result);
@@ -467,7 +474,12 @@ private:
   class DistanceCacheKey
   {
   public:
-    DistanceCacheKey(const geometry_msgs::Pose& pose, QueryRegion query_region, bool query_obstacles, int bins_per_meter, int bins_per_rotation)
+    DistanceCacheKey(
+        const geometry_msgs::Pose& pose,
+        QueryRegion query_region,
+        bool query_obstacles,
+        int bins_per_meter,
+        int bins_per_rotation)
     {
       // If bins_per_meter or bins_per_rotation are zero, the cache is disabled.
       // The key is allowed to be calculated anyway as an exact key (and this
@@ -546,7 +558,7 @@ private:
       // Make the hash SIMD friendly by using primes and addition instead of
       // hash_combine which must be done sequentially.
       uint64_t rv = 0;
-      for (unsigned i=0; i<8; ++i)
+      for (unsigned i=0; i < 8; ++i)
       {
         rv += u[i].uint * primes[i];
       }
@@ -589,14 +601,14 @@ private:
       mesh_triangle_id = rhs.mesh_triangle_id;
       return *this;
     }
-    DistanceCacheEntry(const OcTreeMeshSolver<FCLSolver>::DistanceResult& result)
+    explicit DistanceCacheEntry(const OcTreeMeshSolver<FCLSolver>::DistanceResult& result)
         : distance(result.min_distance),
           octomap_box(result.octomap_box),
           octomap_box_center(result.octomap_box_center),
           mesh_triangle_id(result.mesh_triangle_id)
     {
     }
-    DistanceCacheEntry(const DistanceResult& result)
+    explicit DistanceCacheEntry(const DistanceResult& result)
         : octomap_box(result.octomap_box),
           octomap_box_center(result.octomap_box_center),
           mesh_triangle_id(result.mesh_triangle_id)
@@ -625,7 +637,10 @@ private:
     {
       return mesh_triangle_id >= 0;
     }
-    bool getCostmapIndexAndDepth(const octomap::OcTreeSpace& octree_space, Costmap3DIndex* index, unsigned int* depth) const
+    bool getCostmapIndexAndDepth(
+        const octomap::OcTreeSpace& octree_space,
+        Costmap3DIndex* index,
+        unsigned int* depth) const
     {
       if (*this)
       {
@@ -661,7 +676,8 @@ private:
   {
   public:
     // Construct a region of interest at a pose. Internally store the set of halfspaces.
-    RegionsOfInterestAtPose(QueryRegion query_region, const QueryRegionScale& query_region_scale, const geometry_msgs::Pose& pose)
+    RegionsOfInterestAtPose(
+        QueryRegion query_region, const QueryRegionScale& query_region_scale, const geometry_msgs::Pose& pose)
     {
       if (query_region == LEFT || query_region == RIGHT)
       {
@@ -675,7 +691,7 @@ private:
         {
           normal << 0.0, -1.0, 0.0;
         }
-        else if(query_region == RIGHT)
+        else if (query_region == RIGHT)
         {
           normal << 0.0, 1.0, 0.0;
         }
@@ -746,8 +762,10 @@ private:
   double handleDistanceInteriorCollisions(
       const DistanceCacheEntry& cache_entry,
       const geometry_msgs::Pose& pose);
-  using DistanceCache = std::unordered_map<DistanceCacheKey, DistanceCacheEntry, DistanceCacheKeyHash, DistanceCacheKeyEqual>;
-  using ExactDistanceCache = std::unordered_map<DistanceCacheKey, DistanceCacheEntry, DistanceCacheKeyHash, DistanceCacheKeyEqual>;
+  using DistanceCache =
+    std::unordered_map<DistanceCacheKey, DistanceCacheEntry, DistanceCacheKeyHash, DistanceCacheKeyEqual>;
+  using ExactDistanceCache =
+    std::unordered_map<DistanceCacheKey, DistanceCacheEntry, DistanceCacheKeyHash, DistanceCacheKeyEqual>;
   /**
    * The distance cache allows us to find a very good distance guess quickly.
    * The cache memorizes to a hash table for a pose rounded to the number of
@@ -821,7 +839,7 @@ private:
   // The write lock will be held when resetting these so they all reset
   // atomically
   std::atomic<unsigned int> queries_since_clear_;
-  std::atomic<unsigned int> empties_since_clear_; // an empty is a query on an empty costmap
+  std::atomic<unsigned int> empties_since_clear_;  // an empty is a query on an empty costmap
   std::atomic<unsigned int> hits_since_clear_;
   std::atomic<unsigned int> fast_milli_hits_since_clear_;
   std::atomic<unsigned int> slow_milli_hits_since_clear_;

@@ -270,7 +270,10 @@ void OctomapServerLayer3D::resetBoundingBoxUnlocked(Costmap3DIndex min, Costmap3
   last_update_stamp_ = ros::Time(0.0);
 };
 
-void OctomapServerLayer3D::matchSize(const geometry_msgs::Point& min, const geometry_msgs::Point& max, double resolution)
+void OctomapServerLayer3D::matchSize(
+    const geometry_msgs::Point& min,
+    const geometry_msgs::Point& max,
+    double resolution)
 {
   if (!costmap_ || resolution != costmap_->getResolution())
   {
@@ -339,7 +342,7 @@ void OctomapServerLayer3D::mapUpdateCallback(const octomap_msgs::OctomapUpdateCo
       scheduleResubscribeUpdates();
       return;
     }
-    else if(last_seq_ + 1 > map_update_msg->octomap_bounds.header.seq)
+    else if (last_seq_ + 1 > map_update_msg->octomap_bounds.header.seq)
     {
       // We have moved backwards. This means either the server restarted, or
       // we are running from a bagfile and it was rewound. In either case,
@@ -364,7 +367,8 @@ void OctomapServerLayer3D::mapUpdateInternal(const octomap_msgs::Octomap* map_ms
   if (!changed_cells_ || !costmap_)
   {
     // No costmap to update yet
-    ROS_WARN_STREAM_THROTTLE(1.0, "OctomapServerLayer3D " << name_ << ": received update before costmap was setup, ignoring");
+    ROS_WARN_STREAM_THROTTLE(1.0, "OctomapServerLayer3D " << name_ <<
+        ": received update before costmap was setup, ignoring");
     return;
   }
 
@@ -377,25 +381,25 @@ void OctomapServerLayer3D::mapUpdateInternal(const octomap_msgs::Octomap* map_ms
   {
     ROS_WARN_STREAM_THROTTLE(1.0, "OctomapServerLayer3D " << name_ << ": received non-binary bounds map, ignoring");
   }
-  else if(std::abs(map_msg->resolution - costmap_->getResolution()) > 1e-6)
+  else if (std::abs(map_msg->resolution - costmap_->getResolution()) > 1e-6)
   {
     ROS_WARN_STREAM_THROTTLE(1.0, "OctomapServerLayer3D " << name_ << ": received map with resolution " <<
                              map_msg->resolution << " but costmap resolution is " <<
                              costmap_->getResolution() << ", ignoring");
   }
-  else if(bounds_msg != nullptr && std::abs(bounds_msg->resolution - costmap_->getResolution()) > 1e-6)
+  else if (bounds_msg != nullptr && std::abs(bounds_msg->resolution - costmap_->getResolution()) > 1e-6)
   {
     ROS_WARN_STREAM_THROTTLE(1.0, "OctomapServerLayer3D " << name_ << ": received bounds map with resolution " <<
                              map_msg->resolution << " but costmap resolution is " <<
                              costmap_->getResolution() << ", ignoring");
   }
-  else if(map_msg->header.frame_id != layered_costmap_3d_->getGlobalFrameID())
+  else if (map_msg->header.frame_id != layered_costmap_3d_->getGlobalFrameID())
   {
     ROS_WARN_STREAM_THROTTLE(1.0, "OctomapServerLayer3D " << name_ << ": received map in frame " <<
                              map_msg->header.frame_id << " but global frame is " <<
                              layered_costmap_3d_->getGlobalFrameID() << ", ignoring");
   }
-  else if(bounds_msg != nullptr && bounds_msg->header.frame_id != layered_costmap_3d_->getGlobalFrameID())
+  else if (bounds_msg != nullptr && bounds_msg->header.frame_id != layered_costmap_3d_->getGlobalFrameID())
   {
     ROS_WARN_STREAM_THROTTLE(1.0, "OctomapServerLayer3D " << name_ << ": received bounds map in frame " <<
                              bounds_msg->header.frame_id << " but global frame is " <<

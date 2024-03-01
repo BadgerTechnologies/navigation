@@ -191,12 +191,20 @@ void Static2DLayer3D::matchSize(const geometry_msgs::Point& min, const geometry_
 Cost Static2DLayer3D::occupancyGridToCost(int8_t grid_cost)
 {
   if (grid_cost < 0)
+  {
     if (unknown_to_lethal_)
+    {
       return LETHAL;
+    }
     else
+    {
       return UNKNOWN;
+    }
+  }
   else if (grid_cost >= lethal_cost_threshold_)
+  {
     return LETHAL;
+  }
   return FREE;
 }
 
@@ -286,7 +294,7 @@ void Static2DLayer3D::occupancyGridCallback(const nav_msgs::OccupancyGridConstPt
     // Add any cells in new_cells to unchanged_cells that match our current costmap state.
     // Be careful with pruned leaves as they are not at the bottom depth of the tree.
     Costmap3D unchanged_cells(costmap_->getResolution());
-    for(Costmap3D::leaf_iterator it=new_cells.begin_leafs(), end=new_cells.end_leafs(); it != end; ++it)
+    for (Costmap3D::leaf_iterator it=new_cells.begin_leafs(), end=new_cells.end_leafs(); it != end; ++it)
     {
       const Costmap3DIndex key(it.getKey());
       const Cost new_cost = it->getValue();

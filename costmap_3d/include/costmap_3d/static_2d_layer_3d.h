@@ -38,6 +38,7 @@
 #define COSTMAP_3D_STATIC_2D_LAYER_3D_H_
 
 #include <memory>
+#include <string>
 
 #include <dynamic_reconfigure/server.h>
 #include <nav_msgs/OccupancyGrid.h>

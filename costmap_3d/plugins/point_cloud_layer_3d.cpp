@@ -222,7 +222,7 @@ void PointCloudLayer3D::pointCloudCallback(const typename CloudType::ConstPtr& c
     // Add any cells in new_cells to unchanged_cells that match our current costmap state.
     // Be careful with pruned leaves as they are not at the bottom depth of the tree.
     Costmap3D unchanged_cells(costmap_->getResolution());
-    for(Costmap3D::leaf_iterator it=new_cells.begin_leafs(), end=new_cells.end_leafs(); it != end; ++it)
+    for (Costmap3D::leaf_iterator it=new_cells.begin_leafs(), end=new_cells.end_leafs(); it != end; ++it)
     {
       const Costmap3DIndex key(it.getKey());
       const Cost new_cost = it->getValue();

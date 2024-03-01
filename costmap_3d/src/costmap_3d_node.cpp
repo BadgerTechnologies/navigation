@@ -36,7 +36,6 @@
  *********************************************************************/
 #include <ros/ros.h>
 #include <std_srvs/Empty.h>
-#include <std_srvs/Empty.h>
 #include <octomap_msgs/BoundingBoxQuery.h>
 #include <costmap_3d/costmap_3d_ros.h>
 #include <tf2_ros/transform_listener.h>

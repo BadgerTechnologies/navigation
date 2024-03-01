@@ -38,8 +38,10 @@
 #define COSTMAP_3D_COSTMAP_3D_H_
 
 #include <memory>
-#include <octomap/octomap.h>
+#include <string>
+
 #include <geometry_msgs/Point.h>
+#include <octomap/octomap.h>
 
 namespace costmap_3d
 {
@@ -69,9 +71,9 @@ using Costmap3DIndexEntryType = octomap::key_type;
 class Costmap3D : public octomap::OcTree
 {
 public:
-  Costmap3D(double resolution, unsigned int depth = DEFAULT_DEPTH);
+  explicit Costmap3D(double resolution, unsigned int depth = DEFAULT_DEPTH);
   // Load a Costmap3D from a path to a binary octomap file
-  Costmap3D(std::string path);
+  explicit Costmap3D(std::string path);
   Costmap3D(const Costmap3D& rhs);
 
   // Return a new Costmap3D contatinaing only the nonlethal cells.

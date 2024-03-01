@@ -61,7 +61,6 @@ void CostmapLayer3D::updateBounds(const geometry_msgs::Pose robot_pose,
     costmap_->deleteAABB(toOctomapPoint(rolled_min),
                          toOctomapPoint(rolled_max),
                          true);
-
   }
   if (changed_cells_)
   {
@@ -87,16 +86,21 @@ void CostmapLayer3D::updateCosts(const Costmap3D& bounds_map, Costmap3D* master_
         master_map->setTreeValues(static_cast<const Costmap3D*>(costmap_.get()), &bounds_map, true, false);
         break;
       case GenericPlugin_IfUnknown:
-        master_map->setTreeValues(static_cast<const Costmap3D*>(costmap_.get()), &bounds_map, false, false,
-                                  [](const Costmap3D::NodeType* layer_node, Costmap3D::NodeType* master_node, bool node_just_created, const octomap::OcTreeKey&, unsigned int)
-                                  {
-                                    // Only copy data for newly created nodes.
-                                    // A new node indicates that the node did not exist in the master map.
-                                    if (node_just_created)
-                                    {
-                                      master_node->copyData(*layer_node);
-                                    }
-                                  });
+        master_map->setTreeValues(
+            static_cast<const Costmap3D*>(costmap_.get()), &bounds_map, false, false,
+            [](const Costmap3D::NodeType* layer_node,
+               Costmap3D::NodeType* master_node,
+               bool node_just_created,
+               const octomap::OcTreeKey&,
+               unsigned int)
+            {
+              // Only copy data for newly created nodes.
+              // A new node indicates that the node did not exist in the master map.
+              if (node_just_created)
+              {
+                master_node->copyData(*layer_node);
+              }
+            });
         break;
       default:
       case GenericPlugin_Nothing:
@@ -194,9 +198,14 @@ void CostmapLayer3D::touch(const octomap::OcTree& touch_map)
 {
   if (changed_cells_)
   {
-    changed_cells_->setTreeValues(&touch_map, false, false,
-                                  [](const Costmap3D::NodeType*, Costmap3D::NodeType* node, bool, const octomap::OcTreeKey&, unsigned int)
-                                  {node->setValue(LETHAL);});
+    changed_cells_->setTreeValues(
+        &touch_map,
+        false,
+        false,
+        [](const Costmap3D::NodeType*, Costmap3D::NodeType* node, bool, const octomap::OcTreeKey&, unsigned int)
+        {
+          node->setValue(LETHAL);
+        });
   }
 }
 

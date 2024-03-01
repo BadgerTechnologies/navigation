@@ -153,4 +153,4 @@ octomap_msgs::OctomapUpdatePtr Costmap3DPublisher::createMapUpdateMessage(const 
   return msg_ptr;
 }
 
-}  // end namespace costmap_2d
+}  // end namespace costmap_3d

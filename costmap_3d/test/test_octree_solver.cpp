@@ -50,10 +50,17 @@
 #include <costmap_3d/costmap_3d_query.h>
 #include <costmap_3d/octree_solver.h>
 
-static const std::string PACKAGE_URL("package://costmap_3d/");
+static std::string make_package_url(const char* path)
+{
+  return std::string("package://costmap_3d/") + path;
+}
 
-template <typename S>
-void generateRandomTransforms(S extents[6], fcl::aligned_vector<fcl::Transform3<S>>& transforms, std::size_t n);
+template <typename Generator, typename S>
+void generateRandomTransforms(
+    Generator& gen,
+    S extents[6],
+    fcl::aligned_vector<fcl::Transform3<S>>& transforms,
+    std::size_t n);
 
 // Version of FCL's sphereBoxDistance that correctly calculates signed distance
 // when the sphere penetrates the box.
@@ -202,13 +209,9 @@ TEST(test_octree_solver, test_distance_octomap_rss)
   std::chrono::high_resolution_clock::time_point start_time;
   fcl::aligned_vector<fcl::Transform3<double>> transforms;
   double extents[6] = {-10.0, -10.0, -10.0, 10.0, 10.0, 10.0};
-  // Ensure transforms are the same even if other tests use rand().
-  // Really this code should be re-written to use C++'s modern random code, and
-  // to re-implement Eigen's UnitRandom to use it as well. For now, to continue
-  // comparing results with the existing code, leave it alone.
-  srand(1);
-  generateRandomTransforms(extents, transforms, n);
-  for (unsigned i=0; i<n; ++i)
+  std::mt19937 gen(1);
+  generateRandomTransforms(gen, extents, transforms, n);
+  for (unsigned i=0; i < n; ++i)
   {
     const fcl::Transform3<double>& obbrss_tf = transforms[i];
     const fcl::OBB<double>& obb = obbrss.obb;
@@ -222,7 +225,7 @@ TEST(test_octree_solver, test_distance_octomap_rss)
   }
   double total_distance = 0;
   start_time = std::chrono::high_resolution_clock::now();
-  for (unsigned i=0;i<n;++i)
+  for (unsigned i=0; i < n; ++i)
   {
     const fcl::Transform3<double>& obbrss_tf = transforms[i];
     total_distance += costmap_3d::distanceOctomapOBB(radius, aabb_center, obbrss.obb, obbrss_tf);
@@ -233,7 +236,7 @@ TEST(test_octree_solver, test_distance_octomap_rss)
     << " ns, total distance: " << total_distance << std::endl;
   total_distance = 0;
   start_time = std::chrono::high_resolution_clock::now();
-  for (unsigned i=0;i<n;++i)
+  for (unsigned i=0; i < n; ++i)
   {
     const fcl::Transform3<double>& obbrss_tf = transforms[i];
     total_distance += sphereOBBSignedDistance(radius, aabb_center, obbrss.obb, obbrss_tf);
@@ -245,7 +248,7 @@ TEST(test_octree_solver, test_distance_octomap_rss)
   // Time Eigen's implementation as a reference as well.
   total_distance = 0;
   start_time = std::chrono::high_resolution_clock::now();
-  for (unsigned i=0;i<n;++i)
+  for (unsigned i=0; i < n; ++i)
   {
     const fcl::Transform3<double>& obbrss_tf = transforms[i];
     total_distance += sphereOBBSignedDistanceEigen(radius, aabb_center, obbrss.obb, obbrss_tf);
@@ -256,7 +259,11 @@ TEST(test_octree_solver, test_distance_octomap_rss)
     " ns, total distance: " << total_distance << std::endl;
 }
 
-void octree_solver_test(std::size_t n, bool negative_x_roi = false, bool non_negative_x_roi = false, bool skip_check = false);
+void octree_solver_test(
+    std::size_t n,
+    bool negative_x_roi = false,
+    bool non_negative_x_roi = false,
+    bool skip_check = false);
 
 TEST(test_octree_solver, test_against_fcl)
 {
@@ -266,51 +273,41 @@ TEST(test_octree_solver, test_against_fcl)
   std::chrono::high_resolution_clock::time_point start_time;
 }
 
-template <typename S>
-S rand_interval(S rmin, S rmax)
+template <typename Generator>
+double rand_interval(Generator& gen, double rmin, double rmax)
 {
-  S t = rand() / ((S)RAND_MAX + 1);
-  return (t * (rmax - rmin) + rmin);
+  std::uniform_real_distribution<> d_distr(rmin, rmax);
+  return d_distr(gen);
 }
 
-template <typename S>
-void eulerToMatrix(S a, S b, S c, fcl::Matrix3<S>& R)
+template <typename Generator>
+Eigen::Quaterniond getRandomVersor(Generator& gen)
 {
-  auto c1 = std::cos(a);
-  auto c2 = std::cos(b);
-  auto c3 = std::cos(c);
-  auto s1 = std::sin(a);
-  auto s2 = std::sin(b);
-  auto s3 = std::sin(c);
-
-  R << c1 * c2, - c2 * s1, s2,
-      c3 * s1 + c1 * s2 * s3, c1 * c3 - s1 * s2 * s3, - c2 * s3,
-      s1 * s3 - c1 * c3 * s2, c3 * s1 * s2 + c1 * s3, c2 * c3;
+  const double u1 = rand_interval(gen, 0, 1);
+  const double u2 = rand_interval(gen, 0, 2 * M_PI);
+  const double u3 = rand_interval(gen, 0, 2 * M_PI);
+  const double a = std::sqrt(1.0 - u1);
+  const double b = std::sqrt(u1);
+  return Eigen::Quaterniond(a * std::sin(u2), a * std::cos(u2), b * std::sin(u3), b * std::cos(u3));
 }
 
-template <typename S>
-void generateRandomTransforms(S extents[6], fcl::aligned_vector<fcl::Transform3<S>>& transforms, std::size_t n)
+template <typename Generator, typename S>
+void generateRandomTransforms(
+    Generator& gen,
+    S extents[6],
+    fcl::aligned_vector<fcl::Transform3<S>>& transforms,
+    std::size_t n)
 {
   transforms.resize(n);
-  for(std::size_t i = 0; i < n; ++i)
+  for (std::size_t i=0; i < n; ++i)
   {
-    auto x = rand_interval(extents[0], extents[3]);
-    auto y = rand_interval(extents[1], extents[4]);
-    auto z = rand_interval(extents[2], extents[5]);
-
-    const auto pi = fcl::constants<S>::pi();
-    auto a = rand_interval((S)0, 2 * pi);
-    auto b = rand_interval((S)0, 2 * pi);
-    auto c = rand_interval((S)0, 2 * pi);
-
-    {
-      fcl::Matrix3<S> R;
-      eulerToMatrix(a, b, c, R);
-      fcl::Vector3<S> T(x, y, z);
-      transforms[i].setIdentity();
-      transforms[i].linear() = R;
-      transforms[i].translation() = T;
-    }
+    auto x = rand_interval(gen, extents[0], extents[3]);
+    auto y = rand_interval(gen, extents[1], extents[4]);
+    auto z = rand_interval(gen, extents[2], extents[5]);
+    fcl::Vector3<S> T(x, y, z);
+    transforms[i].setIdentity();
+    transforms[i].linear() = getRandomVersor(gen).matrix();
+    transforms[i].translation() = T;
   }
 }
 
@@ -323,7 +320,7 @@ void generateBoxesFromOctomap(
 {
   std::vector<std::array<S, 6>> tree_boxes = tree.toBoxes();
 
-  for(std::size_t i = 0; i < tree_boxes.size(); ++i)
+  for (std::size_t i=0; i < tree_boxes.size(); ++i)
   {
     S x = tree_boxes[i][0];
     S y = tree_boxes[i][1];
@@ -362,13 +359,13 @@ bool defaultDistanceFunction(fcl::CollisionObject<S>* o1, fcl::CollisionObject<S
   const fcl::DistanceRequest<S>& request = cdata->request;
   fcl::DistanceResult<S>& result = cdata->result;
 
-  if(cdata->done) { dist = result.min_distance; return true; }
+  if (cdata->done) { dist = result.min_distance; return true; }
 
   fcl::distance(o1, o2, request, result);
 
   dist = result.min_distance;
 
-  if(dist <= 0) return true; // in collision or in touch
+  if (dist <= 0) return true;  // in collision or in touch
 
   return cdata->done;
 }
@@ -377,13 +374,13 @@ void octree_solver_test(std::size_t n, bool negative_x_roi, bool non_negative_x_
 {
   using S = costmap_3d::Costmap3DQuery::FCLFloat;
   costmap_3d::Costmap3DPtr octree(new costmap_3d::Costmap3D(
-          costmap_3d::Costmap3DQuery::getFileNameFromPackageURL(PACKAGE_URL + "test/aisles.bt")));
+          costmap_3d::Costmap3DQuery::getFileNameFromPackageURL(make_package_url("test/aisles.bt"))));
   // Ensure occupancy threshold is setup properly.
   octree->setOccupancyThres(0.5);
   std::shared_ptr<fcl::OcTree<S>> tree_ptr(new fcl::OcTree<S>(octree));
 
   // Use Costmap3DQuery to get BVH for test mesh
-  costmap_3d::Costmap3DQuery query(octree, PACKAGE_URL + "test/test_robot.stl");
+  costmap_3d::Costmap3DQuery query(octree, make_package_url("test/test_robot.stl"));
   costmap_3d::Costmap3DQuery::FCLRobotModelConstPtr m1 = query.getFCLRobotModel();
   std::shared_ptr<const fcl::CollisionGeometry<S>> m1_ptr(m1);
 
@@ -404,15 +401,14 @@ void octree_solver_test(std::size_t n, bool negative_x_roi, bool non_negative_x_
   fcl::aligned_vector<fcl::Transform3<S>> transforms;
   S extents[] = {-10, -10, -2, 10, 10, 2};
 
-  // Ensure transforms are the same even if other tests use rand()
-  srand(1);
-  generateRandomTransforms(extents, transforms, n);
+  std::mt19937 gen(1);
+  generateRandomTransforms(gen, extents, transforms, n);
   // Be sure to test identity
   transforms[0] = fcl::Transform3<S>::Identity();
 
   std::chrono::high_resolution_clock::duration total_time(0);
   std::chrono::high_resolution_clock::time_point start_time;
-  for(std::size_t i = 0; i < n; ++i)
+  for (std::size_t i=0; i < n; ++i)
   {
     fcl::Transform3<S> tf1(transforms[0]);
     fcl::Transform3<S> tf2(transforms[i]);
@@ -433,13 +429,16 @@ void octree_solver_test(std::size_t n, bool negative_x_roi, bool non_negative_x_
         request,
         &result);
     S dist1 = result.min_distance;
-    std::cout << " octree iteration " << i << ": " << std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - start_time).count() << "ns" << std::endl;
+    std::cout << " octree iteration " << i << ": "
+      << std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::high_resolution_clock::now() -start_time).count()
+      << "ns" << std::endl;
     total_time += std::chrono::high_resolution_clock::now() - start_time;
 
     // Check the result against FCL's broadphase distance
     std::vector<std::shared_ptr<fcl::CollisionObject<S>>> boxes;
     generateBoxesFromOctomap<S>(*tree_ptr, &boxes, non_negative_x_roi, negative_x_roi);
-    for(std::size_t j = 0; j < boxes.size(); ++j)
+    for (std::size_t j=0; j < boxes.size(); ++j)
       boxes[j]->setTransform(tf1 * boxes[j]->getTransform());
 
     fcl::DynamicAABBTreeCollisionManager<S> manager;
@@ -470,7 +469,9 @@ void octree_solver_test(std::size_t n, bool negative_x_roi, bool non_negative_x_
       EXPECT_TRUE(dist1 < 1e-6 && dist2 < 1e-6);
     }
   }
-  std::cout << "Average time per octree solve: " << std::chrono::duration_cast<std::chrono::nanoseconds>(total_time).count() / n << "ns" << std::endl;
+  std::cout << "Average time per octree solve: "
+    << std::chrono::duration_cast<std::chrono::nanoseconds>(total_time).count() / n
+    << "ns" << std::endl;
 }
 
 // Test the custom ArgSortUpTo8 function used by the octree_solver to very
@@ -495,7 +496,8 @@ TEST(test_octree_solver, test_arg_sort_up_to_8)
       // exercising every permutation is a good overall performance check
       // and is doable for the size lists that are being sorted.
       double permutation[8] = {0, 1, 2, 3, 4, 5, 6, 7};
-      do
+      bool more_permutations = true;
+      while (more_permutations)
       {
         start_time = std::chrono::high_resolution_clock::now();
         costmap_3d::ArgSortUpTo8(n, indices, permutation);
@@ -513,8 +515,8 @@ TEST(test_octree_solver, test_arg_sort_up_to_8)
           EXPECT_EQ(i, permutation[indices[i]]);
         }
         iterations++;
+        more_permutations = std::next_permutation(permutation, permutation + n);
       }
-      while (std::next_permutation(permutation, permutation + n));
       if (n > 1)
       {
         // Now test sorting 0/1 sequences of every combination to ensure
@@ -522,12 +524,12 @@ TEST(test_octree_solver, test_arg_sort_up_to_8)
         // number of set bits in a fairly standard way (popcount isn't added
         // until C++20).
         std::bitset<8> bits;
-        for (unsigned p=0; p < (1<<n); ++p)
+        for (unsigned p=0; p < (1 << n); ++p)
         {
           bits.reset();
-          for (unsigned bit=0; bit<n; ++bit)
+          for (unsigned bit=0; bit < n; ++bit)
           {
-            if (((1<<bit) & p) == 0)
+            if (((1 << bit) & p) == 0)
             {
               permutation[bit] = 0;
             }
@@ -579,10 +581,10 @@ TEST(test_octree_solver, test_arg_sort_up_to_8)
   std::uniform_int_distribution<> n_distr(2, 8);
   std::uniform_real_distribution<> d_distr(-1e6, 1e6);
 
-  for (unsigned a=0; a<n; ++a)
+  for (unsigned a=0; a < n; ++a)
   {
     ns[a] = n_distr(gen);
-    for (unsigned i=0; i<ns[a]; ++i)
+    for (unsigned i=0; i < ns[a]; ++i)
     {
       darrs[a][i] = d_distr(gen);
     }
@@ -590,18 +592,18 @@ TEST(test_octree_solver, test_arg_sort_up_to_8)
   // Check to make sure that ArgSortUpTo8 actually sorts these random numbers
   // within the acceptable tolerance (as the internal packing step does
   // introduce some absolute error at the nano-meter scale)
-  for (unsigned a=0; a<n; ++a)
+  for (unsigned a=0; a < n; ++a)
   {
     unsigned indices[8];
     costmap_3d::ArgSortUpTo8(ns[a], indices, darrs[a].data());
-    for (unsigned i=0; i<ns[a]-1; ++i)
+    for (unsigned i=0; i < ns[a] - 1; ++i)
     {
-      EXPECT_LT(darrs[a][indices[i]], darrs[a][indices[i+1]] + 1e-7);
+      EXPECT_LT(darrs[a][indices[i]], darrs[a][indices[i + 1]] + 1e-7);
     }
   }
   // Now time the same sorts, and compare to std::sort on the same data.
   start_time = std::chrono::high_resolution_clock::now();
-  for (unsigned a=0; a<n; ++a)
+  for (unsigned a=0; a < n; ++a)
   {
     unsigned indices[8];
     costmap_3d::ArgSortUpTo8(ns[a], indices, darrs[a].data());
@@ -612,7 +614,7 @@ TEST(test_octree_solver, test_arg_sort_up_to_8)
       std::chrono::duration_cast<std::chrono::nanoseconds>(arg_sort_time).count() <<
       "ns" << std::endl;
   start_time = std::chrono::high_resolution_clock::now();
-  for (unsigned a=0; a<n; ++a)
+  for (unsigned a=0; a < n; ++a)
   {
     unsigned indices[8];
     const double* distances = darrs[a].data();
@@ -647,7 +649,7 @@ TEST(test_octree_solver, test_arg_sort_up_to_8)
 class PoseBinKey
 {
 public:
-  PoseBinKey(const geometry_msgs::Pose& pose)
+  explicit PoseBinKey(const geometry_msgs::Pose& pose)
   {
     binned_pose_ = pose;
     hash_ = hash_value();
@@ -701,7 +703,7 @@ protected:
     // Make the hash SIMD friendly by using primes and addition instead of
     // hash_combine which must be done sequentially.
     uint64_t rv = 0;
-    for (unsigned i=0; i<7; ++i)
+    for (unsigned i=0; i < 7; ++i)
     {
       rv += u[i].uint * primes[i];
     }
@@ -835,7 +837,7 @@ void test_pose_binning_impl(int bins_per_meter, int bins_per_rotation, bool verb
   // double the bins_per_rotation to get the maximum distance from the center
   // of a bin to one of its corners.
   const double angular_distance_limit = binPoseAngularDistanceLimit(2 * bins_per_rotation);
-  for (unsigned i=0; i<n; ++i)
+  for (unsigned i=0; i < n; ++i)
   {
     pose_arr[i].position.x = distr(gen);
     pose_arr[i].position.y = distr(gen);
@@ -877,7 +879,7 @@ void test_pose_binning_impl(int bins_per_meter, int bins_per_rotation, bool verb
   std::chrono::high_resolution_clock::duration bin_pose_time;
 
   start_time = std::chrono::high_resolution_clock::now();
-  for (unsigned i=0; i<n; ++i)
+  for (unsigned i=0; i < n; ++i)
   {
     binned_poses[i] = binPose(pose_arr[i], bins_per_meter, bins_per_rotation);
   }
@@ -889,7 +891,7 @@ void test_pose_binning_impl(int bins_per_meter, int bins_per_rotation, bool verb
         "ns" << std::endl;
   }
 
-  for (unsigned i=0; i<n; ++i)
+  for (unsigned i=0; i < n; ++i)
   {
     pose_arr[i].position.x = distr(gen);
     pose_arr[i].position.y = distr(gen);
@@ -920,7 +922,7 @@ void test_pose_binning_impl(int bins_per_meter, int bins_per_rotation, bool verb
   }
 
   start_time = std::chrono::high_resolution_clock::now();
-  for (unsigned i=0; i<n; ++i)
+  for (unsigned i=0; i < n; ++i)
   {
     binned_poses[i] = binPose(pose_arr[i], bins_per_meter, bins_per_rotation);
   }
@@ -934,7 +936,7 @@ void test_pose_binning_impl(int bins_per_meter, int bins_per_rotation, bool verb
 
   // Verify that rotations about the z axis all bin equally
   PoseBinMap pose_bin_map;
-  for (double i=.125 / bins_per_rotation; i<1.0; i+=(.25 / bins_per_rotation))
+  for (double i=.125 / bins_per_rotation; i < 1.0; i+=(.25 / bins_per_rotation))
   {
     double half_cos = cos(M_PI * i);
     double half_sin = sin(M_PI * i);

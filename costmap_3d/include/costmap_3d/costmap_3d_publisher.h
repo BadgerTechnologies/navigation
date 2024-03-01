@@ -37,6 +37,8 @@
 #ifndef COSTMAP_3D_COSTMAP_3D_PUBLISHER_H_
 #define COSTMAP_3D_COSTMAP_3D_PUBLISHER_H_
 
+#include <string>
+
 #include <ros/ros.h>
 #include <costmap_3d/layered_costmap_3d.h>
 #include <octomap_msgs/Octomap.h>
@@ -63,7 +65,8 @@ private:
 
   void connectCallback(const ros::SingleSubscriberPublisher& pub);
   octomap_msgs::OctomapPtr createMapMessage(const Costmap3D& map);
-  octomap_msgs::OctomapUpdatePtr createMapUpdateMessage(const Costmap3D& value_map, const Costmap3D& bounds_map, bool first_map=false);
+  octomap_msgs::OctomapUpdatePtr createMapUpdateMessage(
+      const Costmap3D& value_map, const Costmap3D& bounds_map, bool first_map = false);
 
   std::string update_complete_id;
   ros::NodeHandle nh_;

@@ -132,7 +132,7 @@ void InteriorCollisionLUT<S>::setup(
   halfspaces_ = halfspaces;
   const fcl::Vector3<S>& min = mesh.aabb_local.min_;
   const fcl::Vector3<S>& max = mesh.aabb_local.max_;
-  for (unsigned int i=0; i<3; ++i)
+  for (unsigned int i=0; i < 3; ++i)
   {
     origin_[i] = std::floor(min[i] / resolution_) * resolution_;
     dimensions_[i] = static_cast<unsigned>(std::floor((max[i] - origin_[i]) / resolution_)) + 1;

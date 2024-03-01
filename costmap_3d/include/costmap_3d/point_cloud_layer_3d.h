@@ -38,6 +38,8 @@
 #define COSTMAP_3D_POINT_CLOUD_LAYER_3D_H_
 
 #include <memory>
+#include <string>
+
 #include <dynamic_reconfigure/server.h>
 #include <costmap_3d/GenericPluginConfig.h>
 #include <costmap_3d/costmap_layer_3d.h>

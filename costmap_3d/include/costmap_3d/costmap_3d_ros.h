@@ -37,11 +37,13 @@
 #ifndef COSTMAP_3D_COSTMAP_3D_ROS_H_
 #define COSTMAP_3D_COSTMAP_3D_ROS_H_
 
-#include <string>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
+#include <string>
 #include <tuple>
+
 #include <ros/ros.h>
 #include <actionlib/server/simple_action_server.h>
 #include <costmap_2d/costmap_2d_ros.h>
@@ -128,7 +130,10 @@ public:
   using super::resetBoundingBox;
 
   /** @brief Reset the costmap within the given axis-aligned bounding box in world coordinates for the given layers. */
-  virtual void resetBoundingBox(geometry_msgs::Point min, geometry_msgs::Point max, const std::set<std::string>& layers);
+  virtual void resetBoundingBox(
+      geometry_msgs::Point min,
+      geometry_msgs::Point max,
+      const std::set<std::string>& layers);
 
   /** @brief Get the cost to put the robot base at the given pose in the 3D costmap.
    *
@@ -246,8 +251,11 @@ private:
   // for a buffered query to a single copy of the costmap, serialize
   // the ROS service and action server.
   std::mutex service_mutex_;
-  void getPlanCost3DActionCallback(const actionlib::SimpleActionServer<costmap_3d_msgs::GetPlanCost3DAction>::GoalConstPtr& goal);
-  bool getPlanCost3DServiceCallback(costmap_3d_msgs::GetPlanCost3DService::Request& request, costmap_3d_msgs::GetPlanCost3DService::Response& response);
+  void getPlanCost3DActionCallback(
+      const actionlib::SimpleActionServer<costmap_3d_msgs::GetPlanCost3DAction>::GoalConstPtr& goal);
+  bool getPlanCost3DServiceCallback(
+      costmap_3d_msgs::GetPlanCost3DService::Request& request,
+      costmap_3d_msgs::GetPlanCost3DService::Response& response);
   template <typename RequestType, typename ResponseType>
   void processPlanCost3D(RequestType& request, ResponseType& response);
   // Should be holding the service mutex, but not the costmap mutex
@@ -255,8 +263,11 @@ private:
           const std::string& footprint_mesh_resource = "",
           double padding = NAN);
 
-  void rayQuery3DActionCallback(const actionlib::SimpleActionServer<costmap_3d_msgs::RayQuery3DAction>::GoalConstPtr& goal);
-  bool rayQuery3DServiceCallback(costmap_3d_msgs::RayQuery3DService::Request& request, costmap_3d_msgs::RayQuery3DService::Response& response);
+  void rayQuery3DActionCallback(
+      const actionlib::SimpleActionServer<costmap_3d_msgs::RayQuery3DAction>::GoalConstPtr& goal);
+  bool rayQuery3DServiceCallback(
+      costmap_3d_msgs::RayQuery3DService::Request& request,
+      costmap_3d_msgs::RayQuery3DService::Response& response);
   template <typename RequestType, typename ResponseType>
   bool processRayQuery3D(RequestType& request, ResponseType& response);
 
@@ -288,7 +299,7 @@ private:
       {
         return false;
       }
-      for (unsigned int i=0; i<3; ++i)
+      for (unsigned int i=0; i < 3; ++i)
       {
         if (lhs2(i) < rhs2(i))
         {
@@ -328,9 +339,8 @@ private:
 
   std::string footprint_mesh_resource_;
   double footprint_3d_padding_;
-
 };
-// class Costmap3DROS
+
 }  // namespace costmap_3d
 
 #endif  // COSTMAP_3D_COSTMAP_3D_ROS_H_

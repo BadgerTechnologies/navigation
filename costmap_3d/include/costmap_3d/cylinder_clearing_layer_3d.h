@@ -38,6 +38,8 @@
 #define COSTMAP_3D_CYLINDER_CLEARING_LAYER_3D_H_
 
 #include <memory>
+#include <string>
+
 #include <dynamic_reconfigure/server.h>
 #include <costmap_3d/CylinderClearingPluginConfig.h>
 #include <costmap_3d/layer_3d.h>

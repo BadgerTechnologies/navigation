@@ -204,7 +204,7 @@ void Costmap3DTo2DLayer::updateBounds(double robot_x, double robot_y, double rob
         const octomap::key_type size_3d = (
             depth_diff_3d >= octomap::KEY_BIT_WIDTH ?
             std::numeric_limits<octomap::key_type>::max() :
-            (((octomap::key_type)1u)<<depth_diff_3d) - 1u);
+            ((static_cast<octomap::key_type>(1u)) << depth_diff_3d) - 1u);
         octomap::key_type max_x_3d = min_x_3d + size_3d;
         octomap::key_type max_y_3d = min_y_3d + size_3d;
         const unsigned char cost = toCostmap2D(it->getValue());
@@ -243,7 +243,10 @@ void Costmap3DTo2DLayer::updateCosts(costmap_2d::Costmap2D& master_grid, int min
     updateWithMax(master_grid, min_i, min_j, max_i, max_j);
 }
 
-void Costmap3DTo2DLayer::updateFrom3D(LayeredCostmap3D* layered_costmap_3d, const Costmap3D& delta, const Costmap3D& bounds_map)
+void Costmap3DTo2DLayer::updateFrom3D(
+    LayeredCostmap3D* layered_costmap_3d,
+    const Costmap3D& delta,
+    const Costmap3D& bounds_map)
 {
   // cache a pointer to the 3d layered costmap to use later
   layered_costmap_3d_ = layered_costmap_3d;
@@ -287,4 +290,4 @@ unsigned char Costmap3DTo2DLayer::toCostmap2D(Cost value) const
                               (value - FREE) / (LETHAL - FREE)) + costmap_2d::FREE_SPACE;
 }
 
-}  // namespace costmap_2d
+}  // namespace costmap_3d

@@ -38,6 +38,8 @@
 #ifndef COSTMAP_3D_PCL_CROP_HULL_H_
 #define COSTMAP_3D_PCL_CROP_HULL_H_
 
+#include <vector>
+
 #include <pcl/common/projection_matrix.h>
 #include <pcl/point_types.h>
 #include <pcl/Vertices.h>
@@ -61,7 +63,7 @@ public:
   using ConstPtr = boost::shared_ptr<const CropHull<PointT> >;
 
   /** \brief Empty Constructor. */
-  CropHull () :
+  CropHull() :
     crop_outside_(true)
   {
   }
@@ -71,7 +73,7 @@ public:
     * the hull used for filtering points.
     */
   inline void
-  setHullIndices (const std::vector<pcl::Vertices>& polygons)
+  setHullIndices(const std::vector<pcl::Vertices>& polygons)
   {
     hull_polygons_ = polygons;
   }
@@ -79,7 +81,7 @@ public:
   /** \brief Get the vertices of the hull used to filter points.
     */
   const std::vector<pcl::Vertices>&
-  getHullIndices () const
+  getHullIndices() const
   {
     return (hull_polygons_);
   }
@@ -88,14 +90,14 @@ public:
     * \param[in] points the point cloud that the hull indices refer to
     */
   inline void
-  setHullCloud (PointCloudPtr points)
+  setHullCloud(PointCloudPtr points)
   {
     hull_cloud_ = points;
   }
 
   /** \brief Get the point cloud that the hull indices refer to. */
   PointCloudPtr
-  getHullCloud () const
+  getHullCloud() const
   {
     return (hull_cloud_);
   }
@@ -115,11 +117,11 @@ public:
     * \param[out] indices the indices of the set of points that passed the filter.
     */
   void
-  applyFilter (const PointCloud& input, std::vector<int> &indices) const
+  applyFilter(const PointCloud& input, std::vector<int> &indices) const
   {
     for (std::size_t index = 0; index < input.size(); index++)
     {
-      std::size_t crossings[3] = {0,0,0};
+      std::size_t crossings[3] = {0, 0, 0};
       Eigen::Vector3f rays[3] =
       {
         Eigen::Vector3f(0.264882f,  0.688399f, 0.675237f),
@@ -133,9 +135,9 @@ public:
             (input.points[index], rays[ray], hull_polygons_[poly], *hull_cloud_);
 
       if (crop_outside_ && (crossings[0]&1) + (crossings[1]&1) + (crossings[2]&1) > 1)
-        indices.push_back (index);
+        indices.push_back(index);
       else if (!crop_outside_)
-        indices.push_back (index);
+        indices.push_back(index);
     }
   }
 
@@ -148,10 +150,11 @@ public:
     * \param[in] cloud Cloud from which the vertex indices are drawn.
     */
   inline static bool
-  rayTriangleIntersect (const PointT& point,
-                        const Eigen::Vector3f& ray,
-                        const pcl::Vertices& verts,
-                        const PointCloud& cloud)
+  rayTriangleIntersect(
+      const PointT& point,
+      const Eigen::Vector3f& ray,
+      const pcl::Vertices& verts,
+      const PointCloud& cloud)
   {
     // Algorithm here is adapted from:
     // http://softsurfer.com/Archive/algorithm_0105/algorithm_0105.htm#intersect_RayTriangle()
@@ -161,38 +164,38 @@ public:
     // This code may be freely used and modified for any purpose
     // providing that this copyright notice is included with it.
     //
-    assert (verts.vertices.size () == 3);
+    assert(verts.vertices.size() == 3);
 
-    const Eigen::Vector3f p = point.getVector3fMap ();
-    const Eigen::Vector3f a = cloud[verts.vertices[0]].getVector3fMap ();
-    const Eigen::Vector3f b = cloud[verts.vertices[1]].getVector3fMap ();
-    const Eigen::Vector3f c = cloud[verts.vertices[2]].getVector3fMap ();
+    const Eigen::Vector3f p = point.getVector3fMap();
+    const Eigen::Vector3f a = cloud[verts.vertices[0]].getVector3fMap();
+    const Eigen::Vector3f b = cloud[verts.vertices[1]].getVector3fMap();
+    const Eigen::Vector3f c = cloud[verts.vertices[2]].getVector3fMap();
     const Eigen::Vector3f u = b - a;
     const Eigen::Vector3f v = c - a;
-    const Eigen::Vector3f n = u.cross (v);
-    const float n_dot_ray = n.dot (ray);
+    const Eigen::Vector3f n = u.cross(v);
+    const float n_dot_ray = n.dot(ray);
 
-    if (std::fabs (n_dot_ray) < 1e-9)
-      return (false);
+    if (std::fabs(n_dot_ray) < 1e-9)
+      return false;
 
-    const float r = n.dot (a - p) / n_dot_ray;
+    const float r = n.dot(a - p) / n_dot_ray;
 
     if (r < 0)
-      return (false);
+      return false;
 
     const Eigen::Vector3f w = p + r * ray - a;
-    const float denominator = u.dot (v) * u.dot (v) - u.dot (u) * v.dot (v);
-    const float s_numerator = u.dot (v) * w.dot (v) - v.dot (v) * w.dot (u);
+    const float denominator = u.dot(v) * u.dot(v) - u.dot(u) * v.dot(v);
+    const float s_numerator = u.dot(v) * w.dot(v) - v.dot(v) * w.dot(u);
     const float s = s_numerator / denominator;
     if (s < 0 || s > 1)
-      return (false);
+      return false;
 
-    const float t_numerator = u.dot (v) * w.dot (u) - u.dot (u) * w.dot (v);
+    const float t_numerator = u.dot(v) * w.dot(u) - u.dot(u) * w.dot(v);
     const float t = t_numerator / denominator;
-    if (t < 0 || s+t > 1)
-      return (false);
+    if (t < 0 || s + t > 1)
+      return false;
 
-    return (true);
+    return true;
   }
 
 protected:
@@ -208,6 +211,6 @@ protected:
   bool crop_outside_;
 };
 
-} // namespace costmap_3d
+}  // namespace costmap_3d
 
 #endif  // COSTMAP_3D_PCL_CROP_HULL_H_

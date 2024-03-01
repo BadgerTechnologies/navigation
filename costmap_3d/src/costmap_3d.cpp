@@ -65,16 +65,6 @@ void Costmap3D::init()
   setClampingThresMax(octomap::probability(LETHAL));
   // By default, only lethal cells are considered occupied
   setOccupancyThres(octomap::probability(LETHAL));
-  // TODO: FCL has an OcTree wrapper class that defines both a free threshold
-  // and an occupied threshold.
-  // It copies the lethal threshold, but defaults to a 0 probability for the
-  // free threshold (i.e., cells are never free!).
-  // However, the MoveIt interfaces currently provide no way to set the FCL
-  // properties.
-  // We need a way to change this to 0.5 (0 log odds) to get the cost to be
-  // accurate.
-  // This isn't a big deal for non-cost queries (such as binary collision or
-  // distance queries).
 }
 
 std::shared_ptr<Costmap3D> Costmap3D::nonlethalOnly() const

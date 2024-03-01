@@ -295,7 +295,7 @@ bool Costmap3DQuery::needCheckCostmap(std::shared_ptr<const octomap::OcTree> new
 template <class Map>
 static double unordered_map_badness(Map const& map)
 {
-  auto const lambda = map.size() / double(map.bucket_count());
+  auto const lambda = map.size() / static_cast<double>(map.bucket_count());
 
   auto cost = 0.;
   for (auto const& entry : map)
@@ -465,9 +465,9 @@ void Costmap3DQuery::checkCostmap(std::shared_ptr<const octomap::OcTree> new_oct
     // Invalidate the last cache. We could keep entries that still point to
     // valid boxes, but there is little to gain, as any misses on the next
     // cycle will quickly have a last cache entry to speed them up.
-    for (unsigned int i=0; i<MAX; ++i)
+    for (unsigned int i=0; i < MAX; ++i)
     {
-      for (unsigned int j=0; j<OBSTACLES_MAX; ++j)
+      for (unsigned int j=0; j < OBSTACLES_MAX; ++j)
       {
         last_distance_cache_entries_[i][j].clear();
       }
@@ -514,13 +514,13 @@ void Costmap3DQuery::printStatistics()
       fast_micro_hits_since_clear_ -
       slow_micro_hits_since_clear_ -
       exact_hits_since_clear_;
-  double hit_ratio = (double)hits_since_clear_ / queries_since_clear_;
-  double empty_ratio = (double)empties_since_clear_ / queries_since_clear_;
-  double fast_milli_hit_ratio = (double)fast_milli_hits_since_clear_ / queries_since_clear_;
-  double slow_milli_hit_ratio = (double)slow_milli_hits_since_clear_ / queries_since_clear_;
-  double fast_micro_hit_ratio = (double)fast_micro_hits_since_clear_ / queries_since_clear_;
-  double slow_micro_hit_ratio = (double)slow_micro_hits_since_clear_ / queries_since_clear_;
-  double exact_hit_ratio = (double)exact_hits_since_clear_ / queries_since_clear_;
+  double hit_ratio = static_cast<double>(hits_since_clear_) / queries_since_clear_;
+  double empty_ratio = static_cast<double>(empties_since_clear_) / queries_since_clear_;
+  double fast_milli_hit_ratio = static_cast<double>(fast_milli_hits_since_clear_) / queries_since_clear_;
+  double slow_milli_hit_ratio = static_cast<double>(slow_milli_hits_since_clear_) / queries_since_clear_;
+  double fast_micro_hit_ratio = static_cast<double>(fast_micro_hits_since_clear_) / queries_since_clear_;
+  double slow_micro_hit_ratio = static_cast<double>(slow_micro_hits_since_clear_) / queries_since_clear_;
+  double exact_hit_ratio = static_cast<double>(exact_hits_since_clear_) / queries_since_clear_;
   uint64_t total_us = misses_since_clear_us_ +
       hits_since_clear_us_ +
       fast_milli_hits_since_clear_us_ +
@@ -547,13 +547,18 @@ void Costmap3DQuery::printStatistics()
       "\n\texact cache hits: " << exact_hits_since_clear_ <<
       "\n\texact cache hit ratio: " << exact_hit_ratio <<
       "\n\ttotal usecs: " << total_us <<
-      "\n\tmiss usecs/query: " << (double)misses_since_clear_us_ / cache_misses <<
-      "\n\thit usecs/query: " << (double)hits_since_clear_us_ / hits_since_clear_ <<
-      "\n\tslow milli hit usecs/query: " << (double)slow_milli_hits_since_clear_us_ / slow_milli_hits_since_clear_ <<
-      "\n\tfast milli hit usecs/query: " << (double)fast_milli_hits_since_clear_us_ / fast_milli_hits_since_clear_ <<
-      "\n\tslow micro hit usecs/query: " << (double)slow_micro_hits_since_clear_us_ / slow_micro_hits_since_clear_ <<
-      "\n\tfast micro hit usecs/query: " << (double)fast_micro_hits_since_clear_us_ / fast_micro_hits_since_clear_ <<
-      "\n\texact hit usecs/query: " << (double)exact_hits_since_clear_us_ / exact_hits_since_clear_ <<
+      "\n\tmiss usecs/query: " << static_cast<double>(misses_since_clear_us_) / cache_misses <<
+      "\n\thit usecs/query: " << static_cast<double>(hits_since_clear_us_) / hits_since_clear_ <<
+      "\n\tslow milli hit usecs/query: " <<
+      static_cast<double>(slow_milli_hits_since_clear_us_) / slow_milli_hits_since_clear_ <<
+      "\n\tfast milli hit usecs/query: " <<
+      static_cast<double>(fast_milli_hits_since_clear_us_) / fast_milli_hits_since_clear_ <<
+      "\n\tslow micro hit usecs/query: " <<
+      static_cast<double>(slow_micro_hits_since_clear_us_) / slow_micro_hits_since_clear_ <<
+      "\n\tfast micro hit usecs/query: " <<
+      static_cast<double>(fast_micro_hits_since_clear_us_) / fast_micro_hits_since_clear_ <<
+      "\n\texact hit usecs/query: " <<
+      static_cast<double>(exact_hits_since_clear_us_) / exact_hits_since_clear_ <<
       "\n\tmiss FCL BV distance calculations: " << miss_fcl_bv_distance_calculations_ <<
       "\n\tmiss FCL primitive distance calculations: " << miss_fcl_primitive_distance_calculations_ <<
       "\n\thit FCL BV distance calculations: " << hit_fcl_bv_distance_calculations_ <<
@@ -696,7 +701,8 @@ std::string Costmap3DQuery::getFileNameFromPackageURL(const std::string& url)
 
 double Costmap3DQuery::footprintCost(const geometry_msgs::Pose& pose, Costmap3DQuery::QueryRegion query_region)
 {
-  // TODO: implement as cost query. For now, just translate a collision to cost
+  // This could be implemented as signed distance, or as some other metric.
+  // For now, simply translate a collision as cost.
   return footprintCollision(pose, query_region) ? -1.0 : 0.0;
 }
 
@@ -895,7 +901,8 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
       {
         exact_hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
         exact_hits_since_clear_us_.fetch_add(
-            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
+            std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::high_resolution_clock::now() - start_time).count(),
             std::memory_order_relaxed);
       }
       return distance;
@@ -910,7 +917,8 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
   // Store the region on the stack to avoid dynamic memory allocation.
   RegionsOfInterestAtPose rois(query_region, query_region_scale_, pose);
 
-  DistanceCacheKey milli_cache_key(pose, query_region, query_obstacles, pose_milli_bins_per_meter_, pose_milli_bins_per_rotation_);
+  DistanceCacheKey milli_cache_key(
+      pose, query_region, query_obstacles, pose_milli_bins_per_meter_, pose_milli_bins_per_rotation_);
   bool milli_hit = false;
   DistanceCacheEntry cache_entry;
   if (pose_milli_bins_per_meter_ > 0 && pose_milli_bins_per_rotation_ > 0)
@@ -939,7 +947,8 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
       {
         fast_milli_hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
         fast_milli_hits_since_clear_us_.fetch_add(
-            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
+            std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::high_resolution_clock::now() - start_time).count(),
             std::memory_order_relaxed);
       }
       return distance;
@@ -957,7 +966,8 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     }
   }
 
-  DistanceCacheKey micro_cache_key(pose, query_region, query_obstacles, pose_micro_bins_per_meter_, pose_micro_bins_per_rotation_);
+  DistanceCacheKey micro_cache_key(
+      pose, query_region, query_obstacles, pose_micro_bins_per_meter_, pose_micro_bins_per_rotation_);
   bool micro_hit = false;
   cache_entry.clear();
   if (pose_micro_bins_per_meter_ > 0 && pose_micro_bins_per_rotation_ > 0)
@@ -985,7 +995,8 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
       {
         fast_micro_hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
         fast_micro_hits_since_clear_us_.fetch_add(
-            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
+            std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::high_resolution_clock::now() - start_time).count(),
             std::memory_order_relaxed);
       }
       return distance;
@@ -1169,7 +1180,8 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     {
       slow_micro_hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
       slow_micro_hits_since_clear_us_.fetch_add(
-          std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
+          std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::high_resolution_clock::now() - start_time).count(),
           std::memory_order_relaxed);
       hit_fcl_bv_distance_calculations_.fetch_add(result.bv_distance_calculations);
       hit_fcl_primitive_distance_calculations_.fetch_add(result.primitive_distance_calculations);
@@ -1178,7 +1190,8 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     {
       slow_milli_hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
       slow_milli_hits_since_clear_us_.fetch_add(
-          std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
+          std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::high_resolution_clock::now() - start_time).count(),
           std::memory_order_relaxed);
       hit_fcl_bv_distance_calculations_.fetch_add(result.bv_distance_calculations);
       hit_fcl_primitive_distance_calculations_.fetch_add(result.primitive_distance_calculations);
@@ -1187,7 +1200,8 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     {
       hits_since_clear_.fetch_add(1, std::memory_order_relaxed);
       hits_since_clear_us_.fetch_add(
-          std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
+          std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::high_resolution_clock::now() - start_time).count(),
           std::memory_order_relaxed);
       hit_fcl_bv_distance_calculations_.fetch_add(result.bv_distance_calculations);
       hit_fcl_primitive_distance_calculations_.fetch_add(result.primitive_distance_calculations);
@@ -1195,7 +1209,8 @@ double Costmap3DQuery::calculateDistance(const geometry_msgs::Pose& pose,
     else
     {
       misses_since_clear_us_.fetch_add(
-          std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count(),
+          std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::high_resolution_clock::now() - start_time).count(),
           std::memory_order_relaxed);
       miss_fcl_bv_distance_calculations_.fetch_add(result.bv_distance_calculations);
       miss_fcl_primitive_distance_calculations_.fetch_add(result.primitive_distance_calculations);

@@ -66,7 +66,7 @@ public:
   /**
    * @brief Constructor for a 3D layered costmap
    */
-  LayeredCostmap3D(costmap_2d::LayeredCostmap* layered_costmap_2d);
+  explicit LayeredCostmap3D(costmap_2d::LayeredCostmap* layered_costmap_2d);
 
   /**
    * @brief Destructor
@@ -177,7 +177,7 @@ private:
   class LockLayers
   {
   public:
-    LockLayers(LayeredCostmap3D* layered_costmap_3d);
+    explicit LockLayers(LayeredCostmap3D* layered_costmap_3d);
 
     // lock all layers preventing them from updating any state needed to be
     // consistent between updateBounds and updateCosts

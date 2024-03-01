@@ -34,8 +34,8 @@
  *
  * Author: C. Andy Martin
  *********************************************************************/
-// Uncomment to compile in auto profiling support for optimizing queries
-//#define COSTMAP_3D_ROS_AUTO_PROFILE_QUERY 1
+// Set to 1 to compile in auto profiling support for optimizing queries
+#define COSTMAP_3D_ROS_AUTO_PROFILE_QUERY 0
 #if (COSTMAP_3D_ROS_AUTO_PROFILE_QUERY) > 0
 #include <sys/types.h>
 #include <unistd.h>
@@ -106,7 +106,8 @@ Costmap3DROS::Costmap3DROS(const std::string& name, tf2_ros::Buffer& tf)
       ROS_WARN_STREAM("3D costmap \"" << name << "\" has no 3D plugin layers, will be 2D only");
     }
     footprint_pub_ = private_nh_.advertise<visualization_msgs::Marker>("footprint_3d", 1, true);
-    ray_query_3d_visualization_pub_ = private_nh_.advertise<visualization_msgs::MarkerArray>("ray_query_3d_visualization", 1, true);
+    ray_query_3d_visualization_pub_ = private_nh_.advertise<visualization_msgs::MarkerArray>(
+        "ray_query_3d_visualization", 1, true);
     initialized_ = true;
   }
 
@@ -263,7 +264,10 @@ std::set<std::string> Costmap3DROS::getLayerNames()
   return plugin_names;
 }
 
-void Costmap3DROS::resetBoundingBox(geometry_msgs::Point min, geometry_msgs::Point max, const std::set<std::string>& layers)
+void Costmap3DROS::resetBoundingBox(
+    geometry_msgs::Point min,
+    geometry_msgs::Point max,
+    const std::set<std::string>& layers)
 {
   {
     // Its not OK to hold the lock while calling super::resetBoundingBox even
@@ -281,7 +285,7 @@ void Costmap3DROS::resetBoundingBox(geometry_msgs::Point min, geometry_msgs::Poi
       const std::string& plugin_full_name(plugin->getName());
       std::string plugin_last_name_only;
       int slash = plugin_full_name.rfind('/');
-      if( slash != std::string::npos )
+      if (slash != std::string::npos)
       {
         plugin_last_name_only = plugin_full_name.substr(slash+1);
       }
@@ -301,7 +305,6 @@ void Costmap3DROS::resetBoundingBox(geometry_msgs::Point min, geometry_msgs::Poi
 
 const std::string& Costmap3DROS::getFootprintMeshResource(const std::string& alt_mesh)
 {
-  // TODO: need to verify that the alt file actually exists
   if (alt_mesh.empty())
   {
     return footprint_mesh_resource_;
@@ -539,11 +542,13 @@ void Costmap3DROS::processPlanCost3D(RequestType& request, ResponseType& respons
         Costmap3DQuery::DistanceOptions dopts;
         dopts.query_region = query_region;
         dopts.query_obstacles = query_obstacles;
-        if (request.cost_query_mode == costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_MODE_SIGNED_DISTANCE)
+        if (request.cost_query_mode ==
+            costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_MODE_SIGNED_DISTANCE)
         {
           dopts.signed_distance = true;
         }
-        if (request.cost_query_mode == costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_MODE_EXACT_SIGNED_DISTANCE)
+        if (request.cost_query_mode ==
+            costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_MODE_EXACT_SIGNED_DISTANCE)
         {
           dopts.signed_distance = true;
           dopts.exact_signed_distance = true;
@@ -565,9 +570,12 @@ void Costmap3DROS::processPlanCost3D(RequestType& request, ResponseType& respons
     {
       collision = true;
     }
-    if (request.cost_query_mode == costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_MODE_DISTANCE ||
-        request.cost_query_mode == costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_MODE_SIGNED_DISTANCE ||
-        request.cost_query_mode == costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_MODE_EXACT_SIGNED_DISTANCE)
+    if (request.cost_query_mode ==
+        costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_MODE_DISTANCE ||
+        request.cost_query_mode ==
+        costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_MODE_SIGNED_DISTANCE ||
+        request.cost_query_mode ==
+        costmap_3d_msgs::GetPlanCost3DService::Request::COST_QUERY_MODE_EXACT_SIGNED_DISTANCE)
     {
       // in distance mode, the cost is the minimum distance across all poses
       response.cost = std::min(response.cost, pose_cost);

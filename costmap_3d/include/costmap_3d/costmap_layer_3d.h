@@ -134,7 +134,7 @@ protected:
   /** @brief Touch the given key at the given depth.
    * This layer must be holding the lock to make this call. */
   virtual void touchKeyAtDepth(const octomap::OcTreeKey& key,
-                               unsigned int depth=std::numeric_limits<unsigned int>::max());
+                               unsigned int depth = std::numeric_limits<unsigned int>::max());
 
   /** @brief Update the cells in binary fashion from the given values and bounds.
    * Note: in this version, the value and bounds trees will have their depth
@@ -154,12 +154,12 @@ protected:
   /** @brief Update the cell at the given point.
    * If mark is true, mark the cell, otherwise clear it.
    * This layer must be holding the lock to make this call. */
-  virtual void updateCell(const geometry_msgs::Point& point, bool mark=false);
+  virtual void updateCell(const geometry_msgs::Point& point, bool mark = false);
 
   /** @brief Update the cell at the given key.
    * If mark is true, mark the cell, otherwise clear it.
    * This layer must be holding the lock to make this call. */
-  virtual void updateCell(const octomap::OcTreeKey& key, bool mark=false);
+  virtual void updateCell(const octomap::OcTreeKey& key, bool mark = false);
 
   /** @brief Mark the cell at the given point.
    * This layer must be holding the lock to make this call. */
@@ -203,7 +203,7 @@ protected:
   /** @brief Set the cell cost at the given key and depth.
    * This layer must be holding the lock to make this call. */
   virtual void setCellCostAtDepth(const octomap::OcTreeKey& key, Cost cost,
-                                  unsigned int depth=std::numeric_limits<unsigned int>::max());
+                                  unsigned int depth = std::numeric_limits<unsigned int>::max());
 
   /** @brief Set the cell cost at the given key.
    * This layer must be holding the lock to make this call. */

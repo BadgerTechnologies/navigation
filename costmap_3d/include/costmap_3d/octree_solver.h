@@ -37,14 +37,13 @@
 #ifndef COSTMAP_3D_COSTMAP_MESH_DISTANCE_H
 #define COSTMAP_3D_COSTMAP_MESH_DISTANCE_H
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 #include <limits>
 #include <functional>
 
-//#include <fcl/math/bv/utility.h>
 #include <fcl/geometry/bvh/BVH_model.h>
-//#include <fcl/geometry/shape/utility.h>
 #include <fcl/geometry/shape/box.h>
 #include <octomap/octomap.h>
 
@@ -418,7 +417,11 @@ inline S distanceOctomapOBBRSS(
 // descent uses computeChildBV on a fast-path, so it needs to run as fast as
 // possible.
 template <typename S>
-static inline void computeChildMinMax(const fcl::AABB<S>& root_bv, unsigned int i, fcl::Vector3<S>* child_min, fcl::Vector3<S>* child_max)
+static inline void computeChildMinMax(
+    const fcl::AABB<S>& root_bv,
+    unsigned int i,
+    fcl::Vector3<S>* child_min,
+    fcl::Vector3<S>* child_max)
 {
   const fcl::Vector3<S> root_bv_min = root_bv.min_;
   const fcl::Vector3<S> root_bv_max = root_bv.max_;
@@ -439,7 +442,7 @@ inline int checkROI(const fcl::AABB<S>& bv1, const fcl::Halfspace<S>* roi, size_
   fcl::Vector3<S> bv1_diag = bv1.max_ - bv1.min_;
   bool all_in = true;
 
-  for (unsigned int roi_index=0; roi_index<roi_size; ++roi_index)
+  for (unsigned int roi_index=0; roi_index < roi_size; ++roi_index)
   {
     // This is performance critical code.
     // So do not call boxHalfSpaceSignedDistance, but repeat the work here, as
@@ -482,7 +485,7 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::MeshDistanceRecurse(int root2)
   S bv1_radius = leaf_bv_radius_;
   const fcl::BVHModel<BV>* tree2 = mesh_;
   const fcl::Transform3<S>& tf2 = mesh_tf_;
-  if(tree2->getBV(root2).isLeaf())
+  if (tree2->getBV(root2).isLeaf())
   {
     fcl::Box<S> box(bv1.max_ - bv1.min_);
     fcl::Transform3<S> box_tf = fcl::Transform3<S>::Identity();
@@ -545,7 +548,7 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::MeshDistanceRecurse(int root2)
     int step = go_left ? 1 : -1;
     // The negative step will take us to max unsigned which will terminate the
     // loop too.
-    for (unsigned int child_index=start; child_index<2; child_index+=step)
+    for (unsigned int child_index=start; child_index < 2; child_index+=step)
     {
       if (d[child_index] < rel_err_factor_ * dresult_->min_distance)
       {
@@ -993,8 +996,8 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
 
   if (nchildren > 0)
   {
-    S distances[nchildren];
-    unsigned sorted_indices[nchildren];
+    S distances[8];
+    unsigned sorted_indices[8];
     S radius = bv1_radius * 0.5;
     const BV& bv2 = mesh_->getBV(0).bv;
     for (unsigned int child_index = 0; child_index < nchildren; ++child_index)
