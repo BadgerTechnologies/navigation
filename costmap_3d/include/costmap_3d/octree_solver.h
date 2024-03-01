@@ -240,9 +240,9 @@ void OcTreeMeshSolver<NarrowPhaseSolver>::distance(
 
   world_to_obb_internal_tfs_.clear();
   world_to_obb_internal_tfs_.reserve(tree2->getNumBVs());
-  for (unsigned int i = 0; i < tree2->getNumBVs(); ++i)
+  for (unsigned int bv_index = 0; bv_index < tree2->getNumBVs(); ++bv_index)
   {
-    const fcl::OBB<S>& obb = tree2->getBV(i).bv.obb;
+    const fcl::OBB<S>& obb = tree2->getBV(bv_index).bv.obb;
     fcl::Transform3<S> obb_internal_tf;
     obb_internal_tf.linear() = obb.axis;
     obb_internal_tf.translation() = obb.To;
@@ -439,14 +439,14 @@ inline int checkROI(const fcl::AABB<S>& bv1, const fcl::Halfspace<S>* roi, size_
   fcl::Vector3<S> bv1_diag = bv1.max_ - bv1.min_;
   bool all_in = true;
 
-  for (unsigned int i=0; i<roi_size; ++i)
+  for (unsigned int roi_index=0; roi_index<roi_size; ++roi_index)
   {
     // This is performance critical code.
     // So do not call boxHalfSpaceSignedDistance, but repeat the work here, as
     // we do not want to spend the time to create a Box from an AABB.
     // Also, we know that the AABB is axis-aligned with the world frame and
     // skip rotating the halfspace normal into the boxes frame.
-    const fcl::Halfspace<S>& region(roi[i]);
+    const fcl::Halfspace<S>& region(roi[roi_index]);
     fcl::Vector3<S> normal = region.n;
     fcl::Vector3<S> n_dot_d(normal[0] * bv1_diag[0], normal[1] * bv1_diag[1], normal[2] * bv1_diag[2]);
     fcl::Vector3<S> n_dot_d_abs = n_dot_d.cwiseAbs();
@@ -545,11 +545,11 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::MeshDistanceRecurse(int root2)
     int step = go_left ? 1 : -1;
     // The negative step will take us to max unsigned which will terminate the
     // loop too.
-    for (unsigned int i=start; i<2; i+=step)
+    for (unsigned int child_index=start; child_index<2; child_index+=step)
     {
-      if(d[i] < rel_err_factor_ * dresult_->min_distance)
+      if (d[child_index] < rel_err_factor_ * dresult_->min_distance)
       {
-        if(MeshDistanceRecurse(children[i]))
+        if (MeshDistanceRecurse(children[child_index]))
           return true;
       }
       else
@@ -943,15 +943,15 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
     nchildren = 0;
     if (tree1->nodeHasChildren(root1))
     {
-      for (unsigned int i = 0; i < 8; ++i)
+      for (unsigned int child_index = 0; child_index < 8; ++child_index)
       {
-        if (tree1->nodeChildExists(root1, i))
+        if (tree1->nodeChildExists(root1, child_index))
         {
-          const typename fcl::OcTree<S>::OcTreeNode* child = tree1->getNodeChild(root1, i);
+          const typename fcl::OcTree<S>::OcTreeNode* child = tree1->getNodeChild(root1, child_index);
           if (tree1->isNodeOccupied(child))
           {
             children[nchildren] = child;
-            computeChildMinMax(*bv1, i, &child_mins[nchildren], &child_maxs[nchildren]);
+            computeChildMinMax(*bv1, child_index, &child_mins[nchildren], &child_maxs[nchildren]);
             nchildren++;
           }
         }
@@ -994,13 +994,13 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
   if (nchildren > 0)
   {
     S distances[nchildren];
-    unsigned indices[nchildren];
+    unsigned sorted_indices[nchildren];
     S radius = bv1_radius * 0.5;
     const BV& bv2 = mesh_->getBV(0).bv;
-    for(unsigned int i = 0; i < nchildren; ++i)
+    for (unsigned int child_index = 0; child_index < nchildren; ++child_index)
     {
-      const fcl::Vector3<S> child_bv_center = (child_mins[i] + child_maxs[i]) * 0.5;
-      distances[i] = distanceOctomapOBBRSS(radius, child_bv_center, bv2, world_to_obb_internal_tfs_[0]);
+      const fcl::Vector3<S> child_bv_center = (child_mins[child_index] + child_maxs[child_index]) * 0.5;
+      distances[child_index] = distanceOctomapOBBRSS(radius, child_bv_center, bv2, world_to_obb_internal_tfs_[0]);
     }
     dresult_->bv_distance_calculations += nchildren;
     // Visit the octree from closest to furthest and quit early when we have
@@ -1008,26 +1008,26 @@ bool OcTreeMeshSolver<NarrowPhaseSolver>::OcTreeMeshDistanceRecurse(
     // distance mode when this part of the octree overlaps the root bounding
     // volume of the mesh, as we must check every collision to find the deepest
     // in exact signed distance mode.
-    ArgSortUpTo8(nchildren, indices, distances);
-    for (unsigned i = 0; i < nchildren; ++i)
+    ArgSortUpTo8(nchildren, sorted_indices, distances);
+    for (unsigned child_index = 0; child_index < nchildren; ++child_index)
     {
-      const unsigned index = indices[i];
-      S min_distance = distances[index];
+      const unsigned sorted_index = sorted_indices[child_index];
+      S min_distance = distances[sorted_index];
       if (min_distance < rel_err_factor_ * dresult_->min_distance || (exact_signed_distance_ && min_distance <= 0))
       {
         // Possible a better result is below, descend
         // No way to directly construct an AABB with a given min/max. Just use
         // the single-point constructor and directly set the max.
-        fcl::AABB<S> child_bv(child_mins[index]);
-        child_bv.max_ = child_maxs[index];
+        fcl::AABB<S> child_bv(child_mins[sorted_index]);
+        child_bv.max_ = child_maxs[sorted_index];
         if (check_roi && !entirely_inside_roi)
         {
-          if(OcTreeMeshDistanceRecurse<true>(children[index], &child_bv, radius))
+          if (OcTreeMeshDistanceRecurse<true>(children[sorted_index], &child_bv, radius))
             return true;
         }
         else
         {
-          if(OcTreeMeshDistanceRecurse<false>(children[index], &child_bv, radius))
+          if (OcTreeMeshDistanceRecurse<false>(children[sorted_index], &child_bv, radius))
             return true;
         }
       }
