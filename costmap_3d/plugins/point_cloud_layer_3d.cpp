@@ -115,9 +115,9 @@ void PointCloudLayer3D::updateBounds(
 
 void PointCloudLayer3D::deactivate()
 {
+  unsubscribe();
   std::lock_guard<Layer3D> lock(*this);
   active_ = false;
-  unsubscribe();
   super::deactivate();
 }
 

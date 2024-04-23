@@ -112,9 +112,9 @@ void Static2DLayer3D::updateBounds(
 
 void Static2DLayer3D::deactivate()
 {
+  unsubscribe();
   std::lock_guard<Layer3D> lock(*this);
   active_ = false;
-  unsubscribe();
   super::deactivate();
   if (costmap_)
   {
@@ -139,8 +139,8 @@ void Static2DLayer3D::reset()
   // On a reset, resubscribe to get a new copy of the static map.
   // This is not strictly necessary, but provides an interface to force a reset.
   // Resubscribing is also what the costmap_2d static layer does on reset.
-  std::lock_guard<Layer3D> lock(*this);
   unsubscribe();
+  std::lock_guard<Layer3D> lock(*this);
   if (costmap_)
   {
     // Ensure the next costmap update will not have any old information from

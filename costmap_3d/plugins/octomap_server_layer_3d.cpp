@@ -137,9 +137,9 @@ void OctomapServerLayer3D::updateBounds(
 
 void OctomapServerLayer3D::deactivate()
 {
+  unsubscribe();
   std::lock_guard<Layer3D> lock(*this);
   active_ = false;
-  unsubscribe();
   super::deactivate();
   reset_client_.shutdown();
   erase_bbx_client_.shutdown();
@@ -189,10 +189,10 @@ void OctomapServerLayer3D::subscribeUpdatesUnlocked()
 
 void OctomapServerLayer3D::unsubscribe()
 {
-  std::lock_guard<Layer3D> lock(*this);
   map_sub_.shutdown();
-  using_updates_ = false;
   unsubscribeUpdatesUnlocked();
+  std::lock_guard<Layer3D> lock(*this);
+  using_updates_ = false;
 }
 
 void OctomapServerLayer3D::unsubscribeUpdatesUnlocked()
@@ -217,8 +217,8 @@ void OctomapServerLayer3D::scheduleResubscribeUpdates()
 
 void OctomapServerLayer3D::resubscribeUpdatesCallback()
 {
-  std::lock_guard<Layer3D> lock(*this);
   unsubscribeUpdatesUnlocked();
+  std::lock_guard<Layer3D> lock(*this);
   subscribeUpdatesUnlocked();
   ROS_INFO_STREAM("OctomapServerLayer3D " << name_ << ": resubscribe updates complete");
 }
@@ -297,7 +297,7 @@ void OctomapServerLayer3D::mapCallback(const octomap_msgs::OctomapConstPtr& map_
 
 void OctomapServerLayer3D::mapUpdateCallback(const octomap_msgs::OctomapUpdateConstPtr& map_update_msg)
 {
-  std::lock_guard<Layer3D> lock(*this);
+  std::unique_lock<Layer3D> lock(*this);
   if (!active_ || resub_pending_)
   {
     // We have been deactivated or a resubscribe is pending, but there was
@@ -352,13 +352,22 @@ void OctomapServerLayer3D::mapUpdateCallback(const octomap_msgs::OctomapUpdateCo
   }
   last_seq_ = map_update_msg->octomap_bounds.header.seq;
 
+  bool map_sub_shutdown = false;
   if (!using_updates_)
   {
     using_updates_ = true;
-    // now that we are using updates, there is no need for the map sub
-    map_sub_.shutdown();
+    // now that we are using updates, there is no need for the map sub.
+    // this must be done without the layer lock held, or a deadlock may
+    // occur as shutdown synchronizes on any oustanding callbacks, and the
+    // map callback grabs the layer lock.
+    map_sub_shutdown = false;
   }
   mapUpdateInternal(&map_update_msg->octomap_update, &map_update_msg->octomap_bounds);
+  lock.unlock();
+  if (map_sub_shutdown)
+  {
+    map_sub_.shutdown();
+  }
 }
 
 void OctomapServerLayer3D::mapUpdateInternal(const octomap_msgs::Octomap* map_msg,
