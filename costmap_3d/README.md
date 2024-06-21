@@ -4,7 +4,7 @@ Costmap 3D
 The `costmap_3d` package provides a 3D layered costmap based on octomaps.
 
 The `Costmap3DROS` class specializes `Costmap2DROS` to provide smooth
-backwards compatability.
+backwards compatibility.
 
 Because the `Costmap3DROS` is a `Costmap2DROS`, it has a 2D costmap associated
 with it, and uses the main 2D layered costmap mutex for synchronizing
@@ -26,27 +26,33 @@ data sources, such as sensor fusion layers, to integrate directly.
 
 In addition to the 3D maps, `Costmap3DROS` provides a querying
 interface in contrast to the 2D costmap. This query interface uses the
-Flexible Collision Library, FCL, to perform queries against a robot mesh and
-the current costmap state. Four types of queries are provided, collision,
-cost, distance and signed distance.
+Flexible Collision Library, FCL, along with customized geometry code to
+perform queries against a robot mesh and the current costmap state. Four types
+of queries are provided, collision, cost, distance and signed distance.
+Queries are designed to be as efficient as possible and have many options
+to control trade-offs between accuracy and speed.
 
 ## Caveats
 
-The `badger-develop` branch of `navigation` is required to get the correct
-API changes to `Costmap2DROS` to make it extensible (by making many
+The `badger-noetic-devel` branch of `navigation` is required to get the
+correct API changes to `Costmap2DROS` to make it extensible (by making many
 methods virtual, and by adding a few new APIs).
 
 Cost queries are currently unimplemented, and simply return -1.0 for collision
 and 0.0 otherwise.
 
-The `badger-develop` branch of `octomap` is required for `setTreeValues`.
+The `badger-develop` branch of `octomap` is required for `setTreeValues` and
+other octomap improvements, including variable depth octomaps.
 
-Certain features present in the `badger-develop` branch of `octomap_mapping`
-are used by the octomap costmap layer plugin. The octomap update message
-is used to make efficient map transfer possible from this branch, too.
+In order to correctly use variable depth octomaps and to support the ability
+to send delta octomaps, the `badger-develop` branch of `octomap_msgs` is
+needed.
 
-Many important performance improvements are present in the `badger-develop`
-branch of FCL to make query performance reasonable.
+Certain features present in the `badger-noetic-devel` branch of
+`octomap_mapping` are used by the octomap costmap layer plugin. Primarily, the
+octomap update message is used to make efficient map transfer possible from
+this branch. Also, there are services to clear bounding boxes, and parameters
+to allow for rolling octomaps (to be similar to rolling 2D costmaps).
 
-Signed distance queries between octomaps and meshes are not yet functional in
-FCL.
+To be able to efficiently visualize 3D costmaps (and octomaps), the
+`badger-noetic-devel` branch of `octomap_rviz_plugins` is needed.
