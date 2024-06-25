@@ -960,9 +960,8 @@ private:
         if (exact_cache ||
             (!exact_signed_distance && distance <= 0.0) ||
             (directly_use_cache_when_above_threshold &&
-            std::isfinite(cache_entry_ptr->distance) && (
-              cache_entry_ptr->distance > threshold_ ||
-              distance > threshold_)))
+            std::isfinite(cache_entry_ptr->distance) &&
+            cache_entry_ptr->distance > threshold_))
         {
           if (track_statistics)
           {
