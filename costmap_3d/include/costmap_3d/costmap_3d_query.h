@@ -954,15 +954,17 @@ private:
         *distance_ptr = distance;
         // Fast path.
         // Take the fast path on a hit in an exact cache, or
-        // when not in exact signed distance and there is a collision or
+        // when not in exact signed distance and there is a collision, or
         // when directly using the cache above the threshold and the cache
         // entry is still valid and above the threshold
-        if (exact_cache ||
-            (!exact_signed_distance && distance <= 0.0) ||
-            (directly_use_cache_when_above_threshold &&
-            std::isfinite(cache_entry_ptr->distance) && (
-              cache_entry_ptr->distance > threshold_ ||
-              distance > threshold_)))
+        bool use_fast_path = exact_cache;
+        use_fast_path = use_fast_path || (!exact_signed_distance && distance <= 0.0);
+        use_fast_path = use_fast_path || (
+            directly_use_cache_when_above_threshold &&
+            std::isfinite(cache_entry_ptr->distance) &&
+            cache_entry_ptr->distance > threshold_);
+
+        if (use_fast_path)
         {
           if (track_statistics)
           {
