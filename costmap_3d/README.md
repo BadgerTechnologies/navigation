@@ -32,6 +32,17 @@ of queries are provided, collision, cost, distance and signed distance.
 Queries are designed to be as efficient as possible and have many options
 to control trade-offs between accuracy and speed.
 
+## Testing
+
+There are some useful scripts for testing in the scripts directory.
+
+To enable the named debugs for various statistics, one can run:
+
+```
+rosservice call /move_base/set_logger_level ros.costmap_3d.query_statistics debug
+rosservice call /move_base/set_logger_level ros.costmap_3d.query_distance_cache debug
+```
+
 ## Caveats
 
 The `badger-noetic-devel` branch of `navigation` is required to get the
