@@ -233,6 +233,8 @@ void OcTreeMeshSolver<NarrowPhaseSolver>::distance(
   dresult_ = result;
   mesh_tf_ = tf1.inverse() * tf2;
   mesh_tf_inverse_ = mesh_tf_.inverse();
+  signed_distance_ = request.enable_signed_distance;
+  exact_signed_distance_ = request.enable_exact_signed_distance;
   rel_err_factor_ = std::max(std::min(1.0 - request.rel_err, 1.0), 0.0);
   interior_collision_ = false;
   roi_size_ = request.roi_size;
