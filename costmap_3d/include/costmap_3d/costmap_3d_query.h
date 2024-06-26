@@ -943,14 +943,25 @@ private:
           *cache_entry_ptr = found_entry->second;
         }
       }
-      if (*cache_entry_ptr && (!rois_ptr || rois_ptr->distanceCacheEntryInside(*cache_entry_ptr)))
+      if (*cache_entry_ptr && (
+           exact_cache ||
+           !rois_ptr ||
+           rois_ptr->distanceCacheEntryInside(*cache_entry_ptr)))
       {
-        // Cache hit, find the distance between the mesh triangle at the new
-        // pose and the octomap box, and use this as our initial guess in the
-        // result. This greatly prunes the search tree, yielding a big increase
-        // in runtime performance.
-        assert(distance_function_);
-        double distance = distance_function_(*cache_entry_ptr, pose);
+        double distance;
+        if (exact_cache)
+        {
+          distance = cache_entry_ptr->distance;
+        }
+        else
+        {
+          // Cache hit, find the distance between the mesh triangle at the new
+          // pose and the octomap box, and use this as our initial guess in the
+          // result. This greatly prunes the search tree, yielding a big increase
+          // in runtime performance.
+          assert(distance_function_);
+          distance = distance_function_(*cache_entry_ptr, pose);
+        }
         *distance_ptr = distance;
         // Fast path.
         // Take the fast path on a hit in an exact cache, or
