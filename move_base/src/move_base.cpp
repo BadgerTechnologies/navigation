@@ -1257,7 +1257,7 @@ namespace move_base {
     }
     catch (tf2::ExtrapolationException& ex)
     {
-      ROS_ERROR_THROTTLE(1.0, "Extrapolation Error looking up robot pose: %s\n", ex.what());
+      ROS_ERROR_THROTTLE(1.0, "[MoveBase]: Extrapolation Error looking up robot pose: %s\n", ex.what());
       return false;
     }
 
