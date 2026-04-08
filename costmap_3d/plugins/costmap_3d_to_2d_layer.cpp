@@ -90,7 +90,7 @@ void Costmap3DTo2DLayer::matchSize()
 {
   copy_full_map_ = true;
   super::matchSize();
-  addExtraBounds(getOriginX(), getOriginY(), getSizeInMetersX(), getSizeInMetersY());
+  addExtraBounds(getOriginX(), getOriginY(), getOriginX() + getSizeInMetersX(), getOriginY() + getSizeInMetersY());
 }
 
 void Costmap3DTo2DLayer::activate()
@@ -108,7 +108,76 @@ void Costmap3DTo2DLayer::reset()
   current_ = false;
   layered_costmap_3d_ = NULL;
   copy_full_map_ = true;
-  addExtraBounds(getOriginX(), getOriginY(), getSizeInMetersX(), getSizeInMetersY());
+  addExtraBounds(getOriginX(), getOriginY(), getOriginX() + getSizeInMetersX(), getOriginY() + getSizeInMetersY());
+}
+
+bool Costmap3DTo2DLayer::fillWorldBoxFrom3D(
+    double world_min_x, double world_min_y,
+    double world_max_x, double world_max_y)
+{
+  // The updateMap method locks the master costmap, locking both the 2D
+  // and 3D costmaps (since they use the same lock). Therefore, the 3D
+  // costmap can not change, and trying to lock here would cause a deadlock.
+  Costmap3DConstPtr master_3d = layered_costmap_3d_->getCostmap3D();
+
+  // Octomap cell coordinates are from center, where costmap_2d's are from
+  // bottom-left. We must move the origin to the center to get the correct
+  // results.
+  Costmap3DIndex map_origin_index;
+  if (!master_3d->coordToKeyChecked(origin_x_ + resolution_/2.0, origin_y_ + resolution_/2.0, 0.0, map_origin_index))
+  {
+    // We don't bother handling when the origin of the 2D map is off the 3D
+    // map space. Partial updating around the boundaries is tricky.
+    ROS_WARN_STREAM_THROTTLE(
+        5.0,
+        "Costmap3DTo2DLayer: 2D map origin is not in 3D map index space! "
+        "Marking layer as stale for safety.");
+    return false;
+  }
+
+  int min_map_x, min_map_y, max_map_x, max_map_y;
+  worldToMapEnforceBounds(world_min_x, world_min_y, min_map_x, min_map_y);
+  worldToMapEnforceBounds(world_max_x, world_max_y, max_map_x, max_map_y);
+
+  // Clear the region before filling.
+  for (int row = min_map_y; row <= max_map_y; ++row)
+  {
+    const int row_len = (max_map_x - min_map_x) + 1;
+    memset(costmap_ + min_map_x + row * size_x_, default_value_, row_len);
+  }
+
+  // Fill from the 3D costmap via BBX traversal.
+  Costmap3DIndex min_index, max_index;
+  master_3d->coordToKeyClamped(world_min_x, world_min_y, -std::numeric_limits<double>::max(), min_index);
+  master_3d->coordToKeyClamped(world_max_x, world_max_y, std::numeric_limits<double>::max(), max_index);
+  const octomap::key_type map_ox = map_origin_index[0];
+  const octomap::key_type map_oy = map_origin_index[1];
+  min_index[0] = std::max(min_index[0], map_ox);
+  min_index[1] = std::max(min_index[1], map_oy);
+  max_index[0] = std::min(max_index[0], map_ox + size_x_ - 1);
+  max_index[1] = std::min(max_index[1], map_oy + size_y_ - 1);
+
+  assert(resolution_ > 0.0);
+  assert((master_3d->getResolution() - resolution_) < 1e-6);
+
+  const unsigned int tree_depth = master_3d->getTreeDepth();
+  auto it = master_3d->begin_leafs_bbx(min_index, max_index);
+  const auto end = master_3d->end_leafs_bbx();
+  while (it != end)
+  {
+    octomap::key_type min_kx, min_ky, max_kx, max_ky;
+    clipLeafToMap(it, map_ox, map_oy, tree_depth, min_kx, min_ky, max_kx, max_ky);
+    const unsigned char cost = toCostmap2D(it->getValue());
+    for (octomap::key_type y = min_ky; y <= max_ky; ++y)
+      for (octomap::key_type x = min_kx; x <= max_kx; ++x)
+      {
+        const unsigned int map_index = getIndex(x - map_ox, y - map_oy);
+        if (costmap_[map_index] == costmap_2d::NO_INFORMATION || cost > costmap_[map_index])
+          costmap_[map_index] = cost;
+      }
+    ++it;
+  }
+  return true;
 }
 
 void Costmap3DTo2DLayer::updateBounds(double robot_x, double robot_y, double robot_yaw, double* min_x, double* min_y,
@@ -119,118 +188,49 @@ void Costmap3DTo2DLayer::updateBounds(double robot_x, double robot_y, double rob
     costmap_2d::Costmap2D* master = layered_costmap_->getCostmap();
     if (getOriginX() != master->getOriginX() || getOriginY() != master->getOriginY())
     {
+      double old_origin_x = getOriginX();
+      double old_origin_y = getOriginY();
       updateOrigin(robot_x - getSizeInMetersX() / 2, robot_y - getSizeInMetersY() / 2);
-      // We could attempt to see if we only shifted in X or Y and minimize the
-      // impact on bounds. However, prefer the simplicity of just updating
-      // everything on a shift.
-      addExtraBounds(getOriginX(), getOriginY(), getSizeInMetersX(), getSizeInMetersY());
+      double new_origin_x = getOriginX();
+      double new_origin_y = getOriginY();
+      double new_max_x = new_origin_x + getSizeInMetersX();
+      double new_max_y = new_origin_y + getSizeInMetersY();
+      double old_max_x = old_origin_x + getSizeInMetersX();
+      double old_max_y = old_origin_y + getSizeInMetersY();
+
+      if (enabled_ && layered_costmap_3d_)
+      {
+        // Fill only the newly exposed strips from the current 3D costmap state.
+        // updateOrigin already reset newly exposed cells to default_value_; this
+        // re-populates them from the 3D costmap and marks them for propagation.
+        if (new_origin_x != old_origin_x)
+        {
+          double strip_min_x = (new_origin_x > old_origin_x) ? old_max_x : new_origin_x;
+          double strip_max_x = (new_origin_x > old_origin_x) ? new_max_x : old_origin_x;
+          if (!fillWorldBoxFrom3D(strip_min_x, new_origin_y, strip_max_x, new_max_y))
+            current_ = false;
+          addExtraBounds(strip_min_x, new_origin_y, strip_max_x, new_max_y);
+        }
+        if (new_origin_y != old_origin_y)
+        {
+          double strip_min_y = (new_origin_y > old_origin_y) ? old_max_y : new_origin_y;
+          double strip_max_y = (new_origin_y > old_origin_y) ? new_max_y : old_origin_y;
+          // Use the stable X range (intersection of old and new map) to avoid
+          // re-filling cells already covered by the X strip above.
+          double y_strip_min_x = std::max(new_origin_x, old_origin_x);
+          double y_strip_max_x = std::min(new_max_x, old_max_x);
+          if (!fillWorldBoxFrom3D(y_strip_min_x, strip_min_y, y_strip_max_x, strip_max_y))
+            current_ = false;
+          addExtraBounds(y_strip_min_x, strip_min_y, y_strip_max_x, strip_max_y);
+        }
+      }
     }
   }
+
+  // The 2D cells were already updated directly in updateFrom3D (or fillWorldBoxFrom3D
+  // above for origin-shift strips). Just propagate the dirty region to the master.
   if (enabled_ && layered_costmap_3d_)
   {
-    int min_map_x, min_map_y;
-    int max_map_x, max_map_y;
-    {
-      // First erase the bounding-box of the 2D map.
-      worldToMapEnforceBounds(extra_min_x_, extra_min_y_, min_map_x, min_map_y);
-      worldToMapEnforceBounds(extra_max_x_, extra_max_y_, max_map_x, max_map_y);
-      assert(min_map_x >= 0);
-      assert(min_map_x < (signed)size_x_);
-      assert(min_map_y >= 0);
-      assert(min_map_y < (signed)size_y_);
-      assert(max_map_x >= 0);
-      assert(max_map_x < (signed)size_x_);
-      assert(max_map_y >= 0);
-      assert(max_map_y < (signed)size_y_);
-      for (int row = min_map_y; row <= max_map_y; ++row)
-      {
-        const int row_len = (max_map_x - min_map_x) + 1;
-        const int row_step = size_x_;
-        memset(costmap_ + min_map_x + row * row_step, default_value_, row_len);
-      }
-    }
-
-    // The updateMap method locks the master costmap, locking both the 2D
-    // and 3D costmaps (since they use the same lock). Therefore, the 3D
-    // costmap can not change, and trying to lock here would cause a deadlock.
-    Costmap3DConstPtr master_3d = layered_costmap_3d_->getCostmap3D();
-    Costmap3DIndex map_origin_index;
-    // Octomap cell coordinates are from center, where costmap_2d's are from
-    // bottom-left. We must move the origin to the center to get the correct
-    // results.
-    if (!master_3d->coordToKeyChecked(origin_x_ + resolution_/2.0, origin_y_ + resolution_/2.0, 0.0, map_origin_index))
-    {
-      // We don't bother handling when the origin of the 2D map is off the 3D
-      // map space. Partial updating around the boundaries is tricky.
-      ROS_WARN_STREAM_THROTTLE(
-          5.0,
-          "Costmap3DTo2DLayer: 2D map origin is not in 3D map index space! "
-          "Marking layer as stale for safety.");
-      current_ = false;
-    }
-    else
-    {
-      current_ = true;
-
-      // Update the regions that have changed
-      // Create a bound-box iterator over the 3D costmap.
-      Costmap3DIndex min_index, max_index;
-      master_3d->coordToKeyClamped(extra_min_x_, extra_min_y_, -std::numeric_limits<double>::max(),
-                                   min_index);
-      master_3d->coordToKeyClamped(extra_max_x_, extra_max_y_, std::numeric_limits<double>::max(),
-                                   max_index);
-      const octomap::key_type map_ox = map_origin_index[0];
-      const octomap::key_type map_oy = map_origin_index[1];
-      min_index[0] = std::max(min_index[0], map_ox);
-      min_index[1] = std::max(min_index[1], map_oy);
-      max_index[0] = std::min(max_index[0], map_ox + size_x_ - 1);
-      max_index[1] = std::min(max_index[1], map_oy + size_y_ - 1);
-      assert(map_ox <= min_index[0]);
-      assert(map_oy <= min_index[1]);
-      auto it = master_3d->begin_leafs_bbx(min_index, max_index);
-      auto end = master_3d->end_leafs_bbx();
-
-      assert(resolution_ > 0.0);
-      assert((master_3d->getResolution() - resolution_) < 1e-6);
-
-      while (it != end)
-      {
-        Costmap3DIndex min_index_3d = it.getIndexKey();
-        octomap::key_type min_x_3d = min_index_3d[0];
-        octomap::key_type min_y_3d = min_index_3d[1];
-        const octomap::key_type depth_diff_3d = master_3d->getTreeDepth() - it.getDepth();
-        // avoid undefined behavior in the bit shift by special-case when
-        // depth diff is at or beyond the key's bit width
-        const octomap::key_type size_3d = (
-            depth_diff_3d >= octomap::KEY_BIT_WIDTH ?
-            std::numeric_limits<octomap::key_type>::max() :
-            ((static_cast<octomap::key_type>(1u)) << depth_diff_3d) - 1u);
-        octomap::key_type max_x_3d = min_x_3d + size_3d;
-        octomap::key_type max_y_3d = min_y_3d + size_3d;
-        const unsigned char cost = toCostmap2D(it->getValue());
-
-        // clip the octomap cell x-y box by the 2D map update dimensions
-        min_x_3d = std::max(min_x_3d, map_ox + min_map_x);
-        min_y_3d = std::max(min_y_3d, map_oy + min_map_y);
-        max_x_3d = std::min(max_x_3d, map_ox + max_map_x);
-        max_y_3d = std::min(max_y_3d, map_oy + max_map_y);
-        for (octomap::key_type y = min_y_3d; y <= max_y_3d; ++y)
-        {
-          for (octomap::key_type x = min_x_3d; x <= max_x_3d; ++x)
-          {
-            const unsigned int map_x = x - map_ox;
-            const unsigned int map_y = y - map_oy;
-            assert(map_x >= min_map_x && map_y >= min_map_y && map_x <= max_map_x && map_y <= max_map_y);
-            const unsigned int map_index = getIndex(map_x, map_y);
-            if (costmap_[map_index] == costmap_2d::NO_INFORMATION || cost > costmap_[map_index])
-            {
-              costmap_[map_index] = cost;
-            }
-          }
-        }
-        ++it;
-      }
-    }
     useExtraBounds(min_x, min_y, max_x, max_y);
   }
 }
@@ -255,27 +255,67 @@ void Costmap3DTo2DLayer::updateFrom3D(
   // process, so we do not need to worry about synchronization w/ the layered
   // costmap.
 
-  // Get our extra bounds added for this update.
-  Costmap3D::iterator it, end;
   if (copy_full_map_)
   {
-    it = layered_costmap_3d_->getCostmap3D()->begin_leafs();
-    end = layered_costmap_3d_->getCostmap3D()->end_leafs();
+    // Populate the entire 2D layer from the current 3D costmap state.
+    current_ = fillWorldBoxFrom3D(getOriginX(), getOriginY(),
+                                  getOriginX() + getSizeInMetersX(), getOriginY() + getSizeInMetersY());
+    if (!current_) return;
+    addExtraBounds(getOriginX(), getOriginY(),
+                   getOriginX() + getSizeInMetersX(), getOriginY() + getSizeInMetersY());
     copy_full_map_ = false;
-  }
-  else
-  {
-    it = bounds_map.begin_leafs();
-    end = bounds_map.end_leafs();
+    return;
   }
 
-  while (it != end)
+  // Apply the delta directly to our 2D costmap rather than queuing a BBX
+  // re-traversal. This makes each update O(changed cells) instead of
+  // O(bounding-box area of all changes).
+  Costmap3DConstPtr master_3d = layered_costmap_3d_->getCostmap3D();
+  Costmap3DIndex map_origin_index;
+  if (!master_3d->coordToKeyChecked(origin_x_ + resolution_/2.0, origin_y_ + resolution_/2.0, 0.0, map_origin_index))
   {
+    ROS_WARN_STREAM_THROTTLE(
+        5.0,
+        "Costmap3DTo2DLayer: 2D map origin is not in 3D map index space! "
+        "Marking layer as stale for safety.");
+    current_ = false;
+    return;
+  }
+  current_ = true;
+
+  const octomap::key_type map_ox = map_origin_index[0];
+  const octomap::key_type map_oy = map_origin_index[1];
+  const unsigned int tree_depth = master_3d->getTreeDepth();
+
+  // Pass 1: clear every cell in the affected region to NO_INFORMATION, and
+  // accumulate tight extra bounds for the dirty region.
+  for (auto it = bounds_map.begin_leafs(), end = bounds_map.end_leafs(); it != end; ++it)
+  {
+    octomap::key_type min_kx, min_ky, max_kx, max_ky;
+    clipLeafToMap(it, map_ox, map_oy, tree_depth, min_kx, min_ky, max_kx, max_ky);
+    for (octomap::key_type ky = min_ky; ky <= max_ky; ++ky)
+      for (octomap::key_type kx = min_kx; kx <= max_kx; ++kx)
+        costmap_[getIndex(kx - map_ox, ky - map_oy)] = default_value_;
     double half_size = it.getSize() / 2.0;
-    double x = it.getX();
-    double y = it.getY();
-    addExtraBounds(x - half_size, y - half_size, x + half_size, y + half_size);
-    ++it;
+    addExtraBounds(it.getX() - half_size, it.getY() - half_size,
+                   it.getX() + half_size, it.getY() + half_size);
+  }
+
+  // Pass 2: write the new costs from the delta (cells that still exist after
+  // the update). Use max semantics so a large node doesn't clobber a higher-
+  // cost fine-grained cell written earlier in this pass.
+  for (auto it = delta.begin_leafs(), end = delta.end_leafs(); it != end; ++it)
+  {
+    octomap::key_type min_kx, min_ky, max_kx, max_ky;
+    clipLeafToMap(it, map_ox, map_oy, tree_depth, min_kx, min_ky, max_kx, max_ky);
+    const unsigned char cost = toCostmap2D(it->getValue());
+    for (octomap::key_type ky = min_ky; ky <= max_ky; ++ky)
+      for (octomap::key_type kx = min_kx; kx <= max_kx; ++kx)
+      {
+        unsigned int idx = getIndex(kx - map_ox, ky - map_oy);
+        if (costmap_[idx] == costmap_2d::NO_INFORMATION || cost > costmap_[idx])
+          costmap_[idx] = cost;
+      }
   }
 }
 
