@@ -144,6 +144,8 @@ void Costmap3DROS::reconfigureCB(Costmap3DConfig &config, uint32_t level)
 
   footprint_3d_padding_ = config.footprint_3d_padding;
 
+  updateFootprintMesh(config.footprint_mesh_resource);
+
   publishFootprint();
 
   visualize_ray_query_miss_ = config.visualize_ray_query_miss;
@@ -237,6 +239,8 @@ void Costmap3DROS::updateBufferedQuery(std::shared_ptr<Costmap3DQuery> query)
     query->setLayeredCostmapUpdateNumber(layered_costmap_3d_.getNumberOfUpdates());
     query->updateCostmap(layered_costmap_3d_.getCostmap3D());
   }
+
+  query->updateMeshResource(footprint_mesh_resource_, footprint_3d_padding_);
 }
 
 std::shared_ptr<Costmap3DQuery> Costmap3DROS::getAssociatedQuery(
@@ -669,6 +673,39 @@ bool Costmap3DROS::rayQuery3DServiceCallback(
     costmap_3d_msgs::RayQuery3DService::Response& response)
 {
   return processRayQuery3D(request, response);
+}
+
+void Costmap3DROS::updateFootprintMesh(const std::string& mesh_str)
+{
+  constexpr std::string_view mesh_id_prefix = "mesh_id://";
+  std::string mesh_uri = "";
+
+  if (mesh_str.find(mesh_id_prefix) == 0)
+  {
+    const std::string mesh_id = mesh_str.substr(mesh_id_prefix.size());
+    const std::string mesh_param_path = "/hardware/geometry/meshes/" + mesh_id + "/mesh";
+
+    if (!private_nh_.getParam(mesh_param_path, mesh_uri))
+    {
+      throw std::runtime_error("Unable to get mesh URI for mesh ID: " + mesh_id);
+    }
+  }
+  else
+  {
+    mesh_uri = mesh_str;
+  }
+
+  ROS_INFO_STREAM("Setting default footprint mesh to: " << mesh_uri);
+
+  std::lock_guard<std::mutex> service_lock(service_mutex_);
+  std::unique_lock query_lock(query_map_mutex_);
+
+  if (mesh_uri != footprint_mesh_resource_)
+  {
+    query_map_.clear();
+    service_buffered_query_map_.clear();
+    footprint_mesh_resource_ = mesh_uri;
+  }
 }
 
 static void setTriangleListRectangle(const geometry_msgs::Point& upper_left,

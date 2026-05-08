@@ -345,6 +345,17 @@ public:
   // returns path to package file, or empty on error
   static std::string getFileNameFromPackageURL(const std::string& url);
 
+  /** @brief Update the mesh to use for queries.
+   *
+   * Note: for a buffered query it is necessary to ensure that this method is
+   * only called when there are no outstanding queries. Buffered queries are
+   * optimized to not hold the instance_mutex_ during the query, as the only
+   * time a buffered query can change is when either updateCostmap or
+   * updateMeshResource is called. This is not true for an associated query, as
+   * the costmap may change between queries with no update method being called.
+   */
+  virtual void updateMeshResource(const std::string& mesh_resource, double padding = 0.0);
+
 protected:
   const LayeredCostmap3D* layered_costmap_3d_;
 
@@ -374,17 +385,6 @@ protected:
    * lock.
    */
   virtual bool needCheckCostmap(std::shared_ptr<const octomap::OcTree> new_octree = nullptr);
-
-  /** @brief Update the mesh to use for queries.
-   *
-   * Note: for a buffered query it is necessary to ensure that this method is
-   * only called when there are no outstanding queries. Buffered queries are
-   * optimized to not hold the instance_mutex_ during the query, as the only
-   * time a buffered query can change is when either updateCostmap or
-   * updateMeshResource is called. This is not true for an associated query, as
-   * the costmap may change between queries with no update method being called.
-   */
-  virtual void updateMeshResource(const std::string& mesh_resource, double padding = 0.0);
 
   /** @brief core of distance calculations */
   virtual double calculateDistance(const geometry_msgs::Pose& pose,
@@ -1240,6 +1240,9 @@ private:
   std::atomic<size_t> hit_fcl_primitive_distance_calculations_;
   std::atomic<size_t> miss_fcl_bv_distance_calculations_;
   std::atomic<size_t> miss_fcl_primitive_distance_calculations_;
+
+  std::string mesh_resource_;
+  double padding_ = 0.0;
 };
 
 using Costmap3DQueryPtr = std::shared_ptr<Costmap3DQuery>;

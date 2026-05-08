@@ -394,6 +394,10 @@ void Costmap3DQuery::addPCLPolygonMeshToRobotModel(
 void Costmap3DQuery::updateMeshResource(const std::string& mesh_resource, double padding)
 {
   unique_lock write_lock(instance_mutex_);
+  if (mesh_resource == mesh_resource_ && padding == padding_)
+  {
+    return;
+  }
   std::string filename = getFileNameFromPackageURL(mesh_resource);
   if (filename.size() == 0)
   {

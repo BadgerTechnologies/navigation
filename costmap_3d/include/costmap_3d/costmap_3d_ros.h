@@ -336,6 +336,7 @@ private:
       unsigned int pose_micro_bins_per_rotation = 8192);
   void publishFootprint();
   void publishRegionOfInterest(std::shared_ptr<Costmap3DQuery> query, const geometry_msgs::PoseStamped& query_pose);
+  void updateFootprintMesh(const std::string& mesh_str);
 
   std::string footprint_mesh_resource_;
   double footprint_3d_padding_;
