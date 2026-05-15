@@ -72,11 +72,10 @@ void Costmap3DTo2DLayer3D::activate()
     {
       layered_costmap_3d_->registerUpdateCompleteCallback(
           layer_2d->getName(),
-          std::bind(&Costmap3DTo2DLayer::updateFrom3D,
-                    layer_2d,
-                    std::placeholders::_1,
-                    std::placeholders::_2,
-                    std::placeholders::_3));
+          [layer_2d](LayeredCostmap3D* lc, const Costmap3D&, const Costmap3D& bounds)
+          {
+            layer_2d->updateFrom3D(lc, bounds);
+          });
     }
   }
 }

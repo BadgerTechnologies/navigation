@@ -37,6 +37,7 @@
 #ifndef COSTMAP_3D_COSTMAP_3D_TO_2D_LAYER_H_
 #define COSTMAP_3D_COSTMAP_3D_TO_2D_LAYER_H_
 
+#include <algorithm>
 #include <limits>
 #include <memory>
 #include <unordered_map>
@@ -68,7 +69,7 @@ public:
   virtual void matchSize();
 
   /// Apply a 3D costmap update to our 2D costmap.
-  virtual void updateFrom3D(LayeredCostmap3D* layered_costmap_3d, const Costmap3D& delta, const Costmap3D& bounds_map);
+  virtual void updateFrom3D(LayeredCostmap3D* layered_costmap_3d, const Costmap3D& bounds_map);
 
 protected:
   unsigned char toCostmap2D(Cost value) const;

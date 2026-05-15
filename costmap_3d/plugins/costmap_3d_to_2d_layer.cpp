@@ -245,7 +245,6 @@ void Costmap3DTo2DLayer::updateCosts(costmap_2d::Costmap2D& master_grid, int min
 
 void Costmap3DTo2DLayer::updateFrom3D(
     LayeredCostmap3D* layered_costmap_3d,
-    const Costmap3D& delta,
     const Costmap3D& bounds_map)
 {
   // cache a pointer to the 3d layered costmap to use later
@@ -267,9 +266,6 @@ void Costmap3DTo2DLayer::updateFrom3D(
     return;
   }
 
-  // Apply the delta directly to our 2D costmap rather than queuing a BBX
-  // re-traversal. This makes each update O(changed cells) instead of
-  // O(bounding-box area of all changes).
   Costmap3DConstPtr master_3d = layered_costmap_3d_->getCostmap3D();
   Costmap3DIndex map_origin_index;
   if (!master_3d->coordToKeyChecked(origin_x_ + resolution_/2.0, origin_y_ + resolution_/2.0, 0.0, map_origin_index))
@@ -287,8 +283,12 @@ void Costmap3DTo2DLayer::updateFrom3D(
   const octomap::key_type map_oy = map_origin_index[1];
   const unsigned int tree_depth = master_3d->getTreeDepth();
 
-  // Pass 1: clear every cell in the affected region to NO_INFORMATION, and
-  // accumulate tight extra bounds for the dirty region.
+  // Pass 1: clear every 2D cell touched by bounds_map (collapsed over z),
+  // and accumulate the tight x,y world bounds of the cleared region.
+  double tight_min_wx = std::numeric_limits<double>::max();
+  double tight_min_wy = std::numeric_limits<double>::max();
+  double tight_max_wx = -std::numeric_limits<double>::max();
+  double tight_max_wy = -std::numeric_limits<double>::max();
   for (auto it = bounds_map.begin_leafs(), end = bounds_map.end_leafs(); it != end; ++it)
   {
     octomap::key_type min_kx, min_ky, max_kx, max_ky;
@@ -297,14 +297,31 @@ void Costmap3DTo2DLayer::updateFrom3D(
       for (octomap::key_type kx = min_kx; kx <= max_kx; ++kx)
         costmap_[getIndex(kx - map_ox, ky - map_oy)] = default_value_;
     double half_size = it.getSize() / 2.0;
-    addExtraBounds(it.getX() - half_size, it.getY() - half_size,
-                   it.getX() + half_size, it.getY() + half_size);
+    double wx = it.getX(), wy = it.getY();
+    addExtraBounds(wx - half_size, wy - half_size, wx + half_size, wy + half_size);
+    tight_min_wx = std::min(tight_min_wx, wx - half_size);
+    tight_min_wy = std::min(tight_min_wy, wy - half_size);
+    tight_max_wx = std::max(tight_max_wx, wx + half_size);
+    tight_max_wy = std::max(tight_max_wy, wy + half_size);
   }
 
-  // Pass 2: write the new costs from the delta (cells that still exist after
-  // the update). Use max semantics so a large node doesn't clobber a higher-
-  // cost fine-grained cell written earlier in this pass.
-  for (auto it = delta.begin_leafs(), end = delta.end_leafs(); it != end; ++it)
+  if (tight_min_wx > tight_max_wx)
+    return;
+
+  // Pass 2: re-derive 2D costs from master_3d over the tight x,y bounds,
+  // spanning all z levels. Traversing the full master (not just the delta)
+  // ensures 3D cells absent from bounds_map — e.g. a static floor-level wall
+  // cell when only a higher-z cell at the same x,y changed this cycle —
+  // still contribute to the 2D projection.
+  Costmap3DIndex min_index, max_index;
+  master_3d->coordToKeyClamped(tight_min_wx, tight_min_wy, -std::numeric_limits<double>::max(), min_index);
+  master_3d->coordToKeyClamped(tight_max_wx, tight_max_wy, std::numeric_limits<double>::max(), max_index);
+  min_index[0] = std::max(min_index[0], map_ox);
+  min_index[1] = std::max(min_index[1], map_oy);
+  max_index[0] = std::min(max_index[0], map_ox + (octomap::key_type)(size_x_ - 1));
+  max_index[1] = std::min(max_index[1], map_oy + (octomap::key_type)(size_y_ - 1));
+  for (auto it = master_3d->begin_leafs_bbx(min_index, max_index),
+       end = master_3d->end_leafs_bbx(); it != end; ++it)
   {
     octomap::key_type min_kx, min_ky, max_kx, max_ky;
     clipLeafToMap(it, map_ox, map_oy, tree_depth, min_kx, min_ky, max_kx, max_ky);
